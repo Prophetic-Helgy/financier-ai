@@ -1,0 +1,16 @@
+{
+  "person": "Иванов Иван Иванович",
+  "inn": "770123456789",
+  "year": 2024,
+  "employer": "ООО 'Крупная ИТ Компания'",
+  "monthly_income": [
+    {"month": 1, "code": "2000", "amount": 250000.00},
+    {"month": 2, "code": "2000", "amount": 250000.00},
+    {"month": 3, "code": "2000", "amount": 250000.00},
+    {"month": 3, "code": "2012", "amount": 800000.00, "note": "Годовая премия"} 
+  ],
+  "total_income": 3550000.00,
+  "tax_base": 3550000.00,
+  "tax_calculated": 461500.00,
+  "tax_withheld": 461500.00
+}

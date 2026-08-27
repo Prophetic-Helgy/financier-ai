@@ -1,0 +1,31 @@
+node_modules/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+
+# Артефакты сборки (electron-builder / vite) — не в репозиторий
+out/
+release/
+build/*
+!build/icon.ico
+
+# Реальные клиентские данные — в репозиторий не попадают (безопасность)
+# (файлы остаются на диске для тестов парсера, но не версионируются)
+ref_data/
+src/components/ref_data_extracted/
+test-data/client-requests/
+test-data/office-files/
+*.rar
+# Office-lock файлы (Word/Excel)
+~$*
+
+# Сгенерированные тест-отчёты (dev-артефакты; могут содержать контент клиентских документов)
+test-client-requests-report*.html
+test-office-formats-report.html
+test-report.html
+
+# Локальные кэши инструментов
+.impeccable/

@@ -1,0 +1,52 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background-dark: #0A0A0B;
+  --color-foreground-dark: #e2e8f0;
+  --color-surface-dark: #141416;
+  --color-surface-inner-dark: #1C1C1F;
+  --color-border-dark: #27272a;
+  --color-text-muted-dark: #94a3b8;
+
+  --color-background-light: #f8fafc;
+  --color-foreground-light: #0f172a;
+  --color-surface-light: #ffffff;
+  --color-surface-inner-light: #f1f5f9;
+  --color-border-light: #e2e8f0;
+  --color-text-muted-light: #64748b;
+}
+
+@layer base {
+  :root, :root.light {
+    --bg: var(--color-background-light);
+    --fg: var(--color-foreground-light);
+    --surface: var(--color-surface-light);
+    --surface-inner: var(--color-surface-inner-light);
+    --border: var(--color-border-light);
+    --text-muted: var(--color-text-muted-light);
+    color-scheme: light;
+  }
+
+  :root.dark {
+    --bg: var(--color-background-dark);
+    --fg: var(--color-foreground-dark);
+    --surface: var(--color-surface-dark);
+    --surface-inner: var(--color-surface-inner-dark);
+    --border: var(--color-border-dark);
+    --text-muted: var(--color-text-muted-dark);
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: var(--bg);
+    color: var(--fg);
+    @apply antialiased transition-colors duration-200 font-sans;
+  }
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+
+
