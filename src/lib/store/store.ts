@@ -99,12 +99,13 @@ export function normalizeDate(raw: string): string {
   return s;
 }
 
-/** Ключ дедупликации: дата + сумма + контрагент + назначение + направление */
-function dedupKey(t: { type: string; date: string; amount: number; counterparty: string; purpose: string }): string {
+/** Ключ дедупликации: дата + сумма + валюта + контрагент + назначение + направление */
+function dedupKey(t: { type: string; date: string; amount: number; currency: string; counterparty: string; purpose: string }): string {
   return [
     t.type,
     normalizeDate(t.date),
     Math.round((t.amount || 0) * 100),
+    (t.currency || 'RUB').toUpperCase(),
     (t.counterparty || '').trim().toLowerCase(),
     (t.purpose || '').trim().toLowerCase(),
   ].join('|');
@@ -118,16 +119,18 @@ function counterpartyName(tx: ParsedTransaction): string {
 /**
  * Импортировать транзакции документа в хранилище (мутации — только
  * переданного объекта: копируйте store перед вызовом).
- * Дедупликация по date+amount+counterparty+purpose, включая уже
+ * Дедупликация по date+amount+currency+counterparty+purpose, включая уже
  * сохранённые операции и повторные загрузки того же файла.
+ * Валюта операций — валюта счёта (Фаза 3.3); accountId — счёт назначения
+ * (по умолчанию первый счёт организации).
  */
-export function importDocumentToStore(store: LedgerStore, doc: ParsedDocument): ImportResult {
+export function importDocumentToStore(store: LedgerStore, doc: ParsedDocument, accountId?: string): ImportResult {
   let org = store.organizations.find(o => o.isDefault) || store.organizations[0];
   if (!org) {
     org = { id: createId(), name: 'Моя организация', isDefault: true, createdAt: new Date().toISOString() };
     store.organizations.push(org);
   }
-  let account = store.accounts.find(a => a.orgId === org.id);
+  let account = (accountId && store.accounts.find(a => a.id === accountId)) || store.accounts.find(a => a.orgId === org.id);
   if (!account) {
     account = {
       id: createId(), orgId: org.id, name: 'Основной счёт',
@@ -160,6 +163,7 @@ export function importDocumentToStore(store: LedgerStore, doc: ParsedDocument): 
         type: tx.type,
         date: tx.date,
         amount: tx.amount,
+        currency: tx.currency,
         counterparty: cpName.get(tx.counterpartyId) || '',
         purpose: tx.purpose,
       })
@@ -174,6 +178,7 @@ export function importDocumentToStore(store: LedgerStore, doc: ParsedDocument): 
       type: tx.type,
       date: tx.date,
       amount: Math.abs(tx.amount),
+      currency: account.currency || 'RUB',
       counterparty: counterpartyName(tx),
       purpose: tx.purpose,
     });
@@ -186,6 +191,7 @@ export function importDocumentToStore(store: LedgerStore, doc: ParsedDocument): 
       accountId: account.id,
       date: normalizeDate(tx.date),
       amount: Math.abs(tx.amount),
+      currency: account.currency || 'RUB',
       type: tx.type === 'income' ? 'income' : 'expense',
       counterpartyId: ensureCounterparty(counterpartyName(tx)),
       category: ensureCategory(tx.type === 'income' ? 'income' : 'expense'),

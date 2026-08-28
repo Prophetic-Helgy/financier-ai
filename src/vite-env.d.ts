@@ -63,6 +63,8 @@ interface ElectronAPI {
   readFiles: (filePaths: string[]) => Promise<ReadFileResult[]>;
   // RAR-архив (Фаза 3.1): base64 → содержимое (main-процесс, node-unrar-js)
   unrar?: (base64: string) => Promise<ReadFileResult[] | { error?: string }>;
+  // Курсы ЦБ РФ на дату (Фаза 3.3): main-процесс (CORS cbr.ru)
+  fetchCbrRates?: (date: string) => Promise<{ date: string; rates: Array<{ code: string; rate: number }> } | { error?: string }>;
   onFilesDropped: (callback: (files: ReadFileResult[]) => void) => (() => void);
   onFilesDroppedError: (callback: (errorMsg: string) => void) => void;
   store?: {

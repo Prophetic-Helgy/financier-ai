@@ -7,8 +7,16 @@ import { LedgerStore, SCHEMA_VERSION, createEmptyStore } from './schema';
  * умолчанию) — старые данные пользователей не ломаются.
  */
 const MIGRATIONS: Record<number, (s: any) => any> = {
-  // Пример на будущее:
-  // 2: (v1) => ({ ...v1, budgets: v1.budgets ?? [], schemaVersion: 2 }),
+  // v1 → v2 (Фаза 3.3, мультивалютность): у транзакций появляется валюта
+  // (старые операции были «всё в ₽» — заполняем RUB), добавляем таблицу курсов.
+  2: (v1) => ({
+    ...v1,
+    transactions: (v1.transactions || []).map((t: any) =>
+      t && typeof t.currency === 'string' && t.currency ? t : { ...t, currency: 'RUB' }
+    ),
+    fxRates: Array.isArray(v1.fxRates) ? v1.fxRates : [],
+    schemaVersion: 2,
+  }),
 };
 
 /**

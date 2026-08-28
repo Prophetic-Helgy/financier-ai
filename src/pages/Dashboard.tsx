@@ -15,7 +15,7 @@ import { LedgerView } from "../components/LedgerView";
 import { SellerView } from "../components/SellerView";
 import { loadStore, saveStore, importDocumentToStore } from "../lib/store/store";
 import { createId } from "../lib/store/schema";
-import type { LedgerStore, BudgetGoal } from "../lib/store/schema";
+import type { LedgerStore, BudgetGoal, Account, FxRate } from "../lib/store/schema";
 
 // recharts (~400КБ) грузится лениво — только при открытии вкладки «Аналитика»
 const RichAnalyticsReport = React.lazy(() =>
@@ -75,6 +75,7 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
   const [ledger, setLedger] = useState<LedgerStore | null>(null);
   const [ledgerBusy, setLedgerBusy] = useState(false);
   const [ledgerMsg, setLedgerMsg] = useState<string | null>(null);
+  const [importAccountId, setImportAccountId] = useState<string>(''); // Фаза 3.3: счёт назначения при импорте
   const ledgerRef = useRef<LedgerStore | null>(null);
 
   // Input states
@@ -111,6 +112,33 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
       setLedger(saved);
     } catch (e) {
       console.error('[ledger] Ошибка сохранения бюджетов:', e);
+    }
+  }, []);
+
+  // Сохранить счета / курсы валют (Фаза 3.3)
+  const persistAccounts = useCallback(async (accounts: Account[]) => {
+    try {
+      const base = ledgerRef.current || (await loadStore());
+      const next = structuredClone(base);
+      next.accounts = accounts;
+      const saved = await saveStore(next);
+      ledgerRef.current = saved;
+      setLedger(saved);
+    } catch (e) {
+      console.error('[ledger] Ошибка сохранения счетов:', e);
+    }
+  }, []);
+
+  const persistFxRates = useCallback(async (fxRates: FxRate[]) => {
+    try {
+      const base = ledgerRef.current || (await loadStore());
+      const next = structuredClone(base);
+      next.fxRates = fxRates;
+      const saved = await saveStore(next);
+      ledgerRef.current = saved;
+      setLedger(saved);
+    } catch (e) {
+      console.error('[ledger] Ошибка сохранения курсов валют:', e);
     }
   }, []);
 
@@ -307,7 +335,7 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
       const next = structuredClone(base);
       let added = 0, skipped = 0;
       for (const doc of documents) {
-        const r = importDocumentToStore(next, doc);
+        const r = importDocumentToStore(next, doc, importAccountId || undefined);
         added += r.added;
         skipped += r.skipped;
       }
@@ -322,7 +350,7 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
     } finally {
       setLedgerBusy(false);
     }
-  }, [documents, ledgerBusy]);
+  }, [documents, ledgerBusy, importAccountId]);
 
   // Перечитать хранилище с диска (после восстановления) и синхронизировать state
   const reloadLedger = useCallback(async () => {
@@ -460,15 +488,29 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
 
           {/* Импорт в учёт (Фаза 1) */}
           {documents.length > 0 && (
-            <button
-              onClick={handleImportToLedger}
-              disabled={ledgerBusy}
-              className="w-full flex items-center justify-center gap-1.5 bg-indigo-500/10 border border-indigo-500/30 text-indigo-400 px-3 py-2 rounded-md hover:bg-indigo-500/20 transition-colors text-[11px] font-medium disabled:opacity-50"
-              title="Сохранить операции загруженных документов в локальном хранилище"
-            >
-              <Landmark className="w-3 h-3" />
-              {ledgerBusy ? 'Импорт...' : 'Импортировать в учёт'}
-            </button>
+            <>
+              {ledger && ledger.accounts.length > 1 && (
+                <select
+                  value={importAccountId || ledger.accounts[0].id}
+                  onChange={e => setImportAccountId(e.target.value)}
+                  className="w-full bg-[var(--surface-inner)] border border-[var(--border)] rounded-md text-[11px] text-[var(--fg)] px-2 py-1.5 mb-1.5"
+                  title="Счёт, в который импортировать операции (валюта операций = валюта счёта)"
+                >
+                  {ledger.accounts.map(a => (
+                    <option key={a.id} value={a.id}>{a.name} ({a.currency})</option>
+                  ))}
+                </select>
+              )}
+              <button
+                onClick={handleImportToLedger}
+                disabled={ledgerBusy}
+                className="w-full flex items-center justify-center gap-1.5 bg-indigo-500/10 border border-indigo-500/30 text-indigo-400 px-3 py-2 rounded-md hover:bg-indigo-500/20 transition-colors text-[11px] font-medium disabled:opacity-50"
+                title="Сохранить операции загруженных документов в локальном хранилище"
+              >
+                <Landmark className="w-3 h-3" />
+                {ledgerBusy ? 'Импорт...' : 'Импортировать в учёт'}
+              </button>
+            </>
           )}
           {ledgerMsg && (
             <div className="text-[10px] text-[var(--text-muted)] bg-[var(--surface-inner)] rounded p-1.5 leading-snug">{ledgerMsg}</div>
@@ -783,6 +825,8 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
                     onRestoreFile={handleLedgerRestoreFile}
                     onRestoreLatestBackup={handleLedgerRestoreLatestBackup}
                     onBudgetsChange={(b) => void persistBudgets(b)}
+                    onAccountsChange={(a) => void persistAccounts(a)}
+                    onFxRatesChange={(r) => void persistFxRates(r)}
                   />
                 ) : (
                   <div className="h-full flex items-center justify-center text-[var(--text-muted)] text-sm">

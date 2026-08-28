@@ -335,6 +335,38 @@ ipcMain.handle('archive:unrar', (_event, base64) => {
 });
 
 // ============================================================
+// IPC: курсы ЦБ РФ на дату (Фаза 3.3) — официальный XML-справочник.
+// Запрос из main: у cbr.ru нет CORS-заголовков для рендерера
+// (см. cbrService.ts), а Node-fetch в main их не ограничен.
+// ============================================================
+ipcMain.handle('fx:cbr', async (_event, dateIso) => {
+  try {
+    if (typeof dateIso !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(dateIso)) {
+      return { error: 'некорректная дата (нужно ГГГГ-ММ-ДД)' };
+    }
+    const dmy = dateIso.split('-').reverse().join('/');
+    const res = await fetch(`https://www.cbr.ru/scripts/XML_daily.asp?date_req=${dmy}`);
+    if (!res.ok) return { error: 'ЦБ вернул HTTP ' + res.status };
+    const xml = await res.text();
+    const rates = [];
+    for (const m of xml.matchAll(/<Valute ID="[^"]*">([\s\S]*?)<\/Valute>/g)) {
+      const block = m[1];
+      const code = (block.match(/<CharCode>(.*?)<\/CharCode>/) || [])[1];
+      const nominal = parseInt((block.match(/<Nominal>(.*?)<\/Nominal>/) || [])[1] || '1', 10) || 1;
+      const value = parseFloat(((block.match(/<Value>(.*?)<\/Value>/) || [])[1] || '').replace(',', '.'));
+      if (code && Number.isFinite(value) && value > 0) {
+        rates.push({ code: code.trim(), rate: value / nominal });
+      }
+    }
+    if (!rates.length) return { error: 'в ответе ЦБ нет валют (возможно, не рабочий день)' };
+    return { date: dateIso, rates };
+  } catch (err) {
+    console.error('[main] fx:cbr failed:', err.message);
+    return { error: err.message || 'нет соединения' };
+  }
+});
+
+// ============================================================
 // IPC handlers for ledger store (Фаза 1)
 // JSON-файл в userData, атомарная запись (tmp+rename),
 // автоматические бэкапы (.bak.1 = самый свежий, до 5 поколений)

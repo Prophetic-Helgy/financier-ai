@@ -28,7 +28,7 @@ const near = (a: number, b: number, eps = 0.01) => Math.abs(a - b) < eps;
 function tx(over: Partial<Transaction> & { amount: number }): Transaction {
   return {
     id: createId(), orgId: 'o', accountId: 'a', date: '2026-08-10',
-    amount: over.amount, type: 'expense', counterpartyId: 'c',
+    amount: over.amount, currency: 'RUB', type: 'expense', counterpartyId: 'c',
     category: 'Без категории', purpose: '', source: 't',
     importedAt: '2026-08-28T00:00:00Z', ...over,
   };

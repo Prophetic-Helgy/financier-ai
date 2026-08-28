@@ -4,7 +4,7 @@
  * через цепочку миграций в migrations.ts (обратная совместимость).
  */
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 /** UUID с фолбэком для окружений без crypto.randomUUID */
 export function createId(): string {
@@ -55,6 +55,7 @@ export interface Transaction {
   accountId: string;
   date: string; // 'YYYY-MM-DD' (нормализованный)
   amount: number;
+  currency: string; // ISO 4217, валюта суммы (обычно валюта счёта); RUB — базовая
   type: 'income' | 'expense';
   counterpartyId: string;
   category: string; // имя категории
@@ -70,6 +71,14 @@ export interface BudgetGoal {
   category: string;
   monthlyLimit: number;
   currency: string;
+}
+
+/** Курс валюты (Фаза 3.3): rate — сколько базовой валюты (RUB) за 1 единицу code */
+export interface FxRate {
+  id: string;
+  date: string; // 'YYYY-MM-DD'
+  code: string; // ISO 4217 (не RUB)
+  rate: number;
 }
 
 /** Период (месяц), может быть «закрыт» (используется в Фазе 3) */
@@ -103,6 +112,7 @@ export interface LedgerStore {
   categories: Category[];
   transactions: Transaction[];
   budgets: BudgetGoal[];
+  fxRates: FxRate[];
   periods: Period[];
   manual: ManualEntries;
 }
@@ -123,6 +133,7 @@ export function createEmptyStore(): LedgerStore {
     ],
     transactions: [],
     budgets: [],
+    fxRates: [],
     periods: [],
     manual: { incomes: [], credits: [], assets: [] },
   };

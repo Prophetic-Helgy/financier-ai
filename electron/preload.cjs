@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   readFiles: (filePaths) => ipcRenderer.invoke('read-files', filePaths),
   // RAR-архив (Фаза 3.1): base64 → файлы архива (main-процесс)
   unrar: (base64) => ipcRenderer.invoke('archive:unrar', base64),
+  // Курсы ЦБ РФ на дату (Фаза 3.3): main-процесс (у cbr.ru нет CORS для рендерера)
+  fetchCbrRates: (date) => ipcRenderer.invoke('fx:cbr', date),
   // Listen for files dropped on the Electron window (IPC-based drag-drop)
   onFilesDropped: (callback) => {
     const handler = (_event, files) => callback(files);
