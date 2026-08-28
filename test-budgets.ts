@@ -93,9 +93,12 @@ function main() {
   });
   const sberSummary = budgetSummary(store, ym);
   const expTotal = store.transactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + t.amount, 0);
+  const uncat = store.categories.find(c => c.builtin && c.kind === 'expense')!.name;
+  const uncatExp = store.transactions.filter(t => t.type === 'expense' && t.category === uncat).reduce((sum, t) => sum + t.amount, 0);
   const line = sberSummary.lines.find(l => l.category === 'Без категории')!;
-  check(`План-факт ${ym}: факт = сумма расходов ${expTotal}`, near(line.actual, expTotal), `${line.actual} vs ${expTotal}`);
-  check('Остаток в бюджете 10 000', near(line.remaining, 10000 - expTotal), String(line.remaining));
+  check(`План-факт ${ym}: факт = ${uncatExp}`, near(line.actual, uncatExp), `${line.actual} vs ${uncatExp}`);
+  check('Остаток в бюджете 10 000', near(line.remaining, 10000 - uncatExp), String(line.remaining));
+  check(`Эвристика: комиссия 250 вне бюджета «${uncat}»`, near(sberSummary.unbudgeted, 250) && store.transactions.find(t => t.amount === 250 && t.category !== uncat) !== undefined, 'unbudgeted=' + sberSummary.unbudgeted + ', cat=' + (store.transactions.find(t => t.amount === 250)?.category || '?'));
   const fc = monthForecast(store.transactions, ym, daysInMonth(ym));
   check('Прогноз закрытого месяца = факт', near(fc.projectedTotal, expTotal), String(fc.projectedTotal));
 

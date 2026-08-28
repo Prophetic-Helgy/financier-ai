@@ -1,12 +1,17 @@
 import React, { useMemo, useState } from 'react';
-import { Landmark, FileDown, FileUp, RotateCcw, Target, Trash2, Coins, Wallet, CalendarClock } from 'lucide-react';
-import { LedgerStore, BudgetGoal, Account, FxRate, Period, Transaction, createId } from '../lib/store/schema';
+import { Landmark, FileDown, FileUp, RotateCcw, Target, Trash2, Coins, Wallet, CalendarClock, Tags, Sparkles } from 'lucide-react';
+import { LedgerStore, BudgetGoal, Account, FxRate, Period, Transaction, Category, createId } from '../lib/store/schema';
 import { budgetSummary, monthForecast, currentYM, daysInMonth } from '../lib/store/budgets';
 import {
   totalsInBase, currencyBreakdown, monthFxGainLoss, toBase,
   mergeExternalRates, lastDayOfMonth, BASE_CURRENCY, CbrRate,
 } from '../lib/store/fx';
 import { ymOf, nextPeriods, periodRows, makeCorrection, mtdYtd } from '../lib/store/periods';
+import {
+  UNCATEGORIZED, applyHeuristics, categorizePrompt, parseCategorizeResponse,
+  AiCategorizeItem,
+} from '../lib/store/categorize';
+import { getDefaultConfig, detectLocalLLM, chatWithLocalLLM } from '../lib/llmIntegration';
 import { cn } from '../lib/utils';
 
 interface LedgerViewProps {
@@ -20,6 +25,7 @@ interface LedgerViewProps {
   onFxRatesChange: (rates: FxRate[]) => void;
   onPeriodsChange: (periods: Period[]) => void;
   onTransactionsChange: (transactions: Transaction[]) => void;
+  onCategoriesChange: (categories: Category[]) => void;
 }
 
 const COMMON_CURRENCIES = ['USD', 'EUR', 'GBP', 'CNY', 'KZT', 'BYN', 'AMD', 'AZN', 'UZS', 'PLN', 'TRY'];
@@ -73,7 +79,7 @@ function DeltaChip({ value }: { value: number | null }) {
  * Вкладка «Учёт»: что сохранено в хранилище (переживает перезапуск),
  * итоги, разбивка по месяцам, журнал операций, бэкапы.
  */
-export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onRestoreLatestBackup, onBudgetsChange, onAccountsChange, onFxRatesChange, onPeriodsChange, onTransactionsChange }: LedgerViewProps) {
+export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onRestoreLatestBackup, onBudgetsChange, onAccountsChange, onFxRatesChange, onPeriodsChange, onTransactionsChange, onCategoriesChange }: LedgerViewProps) {
   // Фаза 3.3: итоги — в базовой валюте (RUB), валютные операции по курсу на дату
   const stats = useMemo(() => {
     const base = totalsInBase(store.transactions, store.fxRates);
@@ -290,6 +296,89 @@ export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onResto
     setCorrAmount('');
     setCorrNote('');
   };
+
+  // Фаза 3.7: категории и автокатегоризация (эвристика + локальный LLM)
+  const [catName, setCatName] = useState('');
+  const [catKind, setCatKind] = useState<'income' | 'expense'>('expense');
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiMsg, setAiMsg] = useState<string | null>(null);
+
+  const catCount = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const t of store.transactions) m.set(t.category, (m.get(t.category) || 0) + 1);
+    return m;
+  }, [store.transactions]);
+
+  // Без корректировок: они живут в закрытых месяцах и не перекатегоризируются (Фаза 3.5)
+  const uncatCount = useMemo(
+    () => store.transactions.filter(t => t.category === UNCATEGORIZED && !t.correction).length,
+    [store.transactions]);
+
+  const addCategory = () => {
+    const name = catName.trim();
+    if (!name) return;
+    const exists = store.categories.some(c => c.name.toLowerCase() === name.toLowerCase() && c.kind === catKind);
+    if (!exists) {
+      onCategoriesChange([...store.categories, { id: createId(), name, kind: catKind, builtin: false }]);
+    }
+    setCatName('');
+  };
+  const removeCategory = (id: string) => {
+    const c = store.categories.find(x => x.id === id);
+    if (!c || c.builtin) return;
+    if ((catCount.get(c.name) || 0) > 0) return; // на категории есть операции
+    onCategoriesChange(store.categories.filter(x => x.id !== id));
+  };
+
+  // Эвристика: по ключевым словам в контрагенте/назначении (офлайн, детерминированно)
+  const runHeuristics = () => {
+    const transactions = store.transactions.map(t => ({ ...t }));
+    const categories = [...store.categories];
+    const changed = applyHeuristics({ transactions, categories, counterparties: store.counterparties });
+    if (changed > 0) {
+      onTransactionsChange(transactions);
+      onCategoriesChange(categories);
+    }
+  };
+
+  // ИИ: локальный LLM (LM Studio) категоризирует «Без категории»
+  const aiCategorize = async () => {
+    const uncat = store.transactions.filter(t => t.category === UNCATEGORIZED && !t.correction);
+    if (uncat.length === 0) return;
+    setAiBusy(true);
+    setAiMsg(null);
+    try {
+      const det = await detectLocalLLM();
+      if (!det.available) {
+        throw new Error('LM Studio недоступен — запустите сервер (http://127.0.0.1:1234, включите CORS)');
+      }
+      const config = { ...getDefaultConfig(), endpoint: det.endpoint };
+      const cp = new Map(store.counterparties.map(c => [c.id, c.name]));
+      const items: AiCategorizeItem[] = uncat.slice(0, 60).map(t => ({
+        id: t.id, kind: t.type,
+        counterparty: cp.get(t.counterpartyId) || '',
+        purpose: t.purpose, amount: t.amount,
+      }));
+      const found = new Map<string, string>();
+      for (let i = 0; i < items.length; i += 25) {
+        const batch = items.slice(i, i + 25);
+        const res = await chatWithLocalLLM(config, categorizePrompt(batch, store.categories), { temperature: 0.1, maxTokens: 1500 });
+        if (res.error) throw new Error(res.text || res.error);
+        for (const [id, name] of parseCategorizeResponse(res.text, batch, store.categories)) found.set(id, name);
+      }
+      if (found.size === 0) {
+        setAiMsg('Модель не вернула ни одной подходящей категории — добавьте свои категории и повторите.');
+        return;
+      }
+      onTransactionsChange(store.transactions.map(t => (found.has(t.id) ? { ...t, category: found.get(t.id)! } : t)));
+      setAiMsg(`ИИ: ${found.size} из ${items.length} операций получили категорию`);
+    } catch (e: any) {
+      setAiMsg('ИИ-категоризация не удалась: ' + (e?.message || e));
+    } finally {
+      setAiBusy(false);
+    }
+  };
+  const hasUserCategories = store.categories.some(c => !c.builtin);
 
   return (
     <div className="h-full overflow-y-auto p-6">
@@ -747,6 +836,66 @@ export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onResto
           </div>
         </div>
 
+        {/* Категории (Фаза 3.7): статьи для бюджетов и автокатегоризации */}
+        <div className="mb-6 bg-[var(--surface)] border border-[var(--border)] rounded-xl overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-[var(--border)] bg-[var(--surface-inner)]/50">
+            <h3 className="font-semibold text-sm text-[var(--fg)] flex items-center gap-1.5">
+              <Tags className="w-3.5 h-3.5 text-[var(--text-muted)]" /> Категории
+            </h3>
+          </div>
+          <div className="p-4 space-y-2">
+            <div className="flex flex-wrap gap-2">
+              {store.categories.map(c => {
+                const n = catCount.get(c.name) || 0;
+                return (
+                  <div key={c.id} className="flex items-center gap-2 bg-[var(--surface-inner)] rounded-lg px-3 py-1.5">
+                    <span className="text-xs text-[var(--fg)]">{c.name}</span>
+                    <span className={cn(
+                      "text-[10px] px-1.5 py-0.5 rounded",
+                      c.kind === 'income' ? 'bg-emerald-500/15 text-emerald-500' : 'bg-rose-500/15 text-rose-400'
+                    )}>{c.kind === 'income' ? 'доход' : 'расход'}</span>
+                    <span className="text-[10px] text-[var(--text-muted)]">{n} оп.</span>
+                    <button
+                      onClick={() => removeCategory(c.id)}
+                      disabled={c.builtin || n > 0}
+                      title={c.builtin ? 'Встроенная категория — не удаляется' : n > 0 ? `Нельзя удалить: ${n} операций` : 'Удалить категорию'}
+                      className="p-0.5 text-[var(--text-muted)] hover:text-rose-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <input
+                value={catName}
+                onChange={e => setCatName(e.target.value)}
+                placeholder="Категория (например: Продукты)"
+                className="bg-[var(--surface-inner)] border border-[var(--border)] rounded-md text-xs text-[var(--fg)] px-2.5 py-1.5 w-48"
+              />
+              <select
+                value={catKind}
+                onChange={e => setCatKind(e.target.value as 'income' | 'expense')}
+                className="bg-[var(--surface-inner)] border border-[var(--border)] rounded-md text-xs text-[var(--fg)] px-2 py-1.5"
+              >
+                <option value="expense">Расход</option>
+                <option value="income">Доход</option>
+              </select>
+              <button
+                onClick={addCategory}
+                disabled={!catName.trim()}
+                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 rounded-md text-xs font-medium text-white transition-colors"
+              >
+                Добавить категорию
+              </button>
+              <span className="text-[10px] text-[var(--text-muted)]">
+                Используются в бюджетах и автокатегоризации (эвристика при импорте + ИИ). Удаляется только пустая категория.
+              </span>
+            </div>
+          </div>
+        </div>
+
         {store.transactions.length === 0 ? (
           <div className="h-64 flex flex-col items-center justify-center text-center text-[var(--text-muted)]">
             <Landmark className="w-10 h-10 mb-3 opacity-20" />
@@ -817,13 +966,40 @@ export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onResto
 
             {/* Transactions table */}
             <div className="bg-[var(--surface)] border border-[var(--border)] rounded-xl overflow-hidden">
-              <div className="px-4 py-2.5 border-b border-[var(--border)] bg-[var(--surface-inner)]/50">
+              <div className="px-4 py-2.5 border-b border-[var(--border)] bg-[var(--surface-inner)]/50 flex items-center justify-between gap-3 flex-wrap">
                 <h3 className="font-semibold text-sm text-[var(--fg)]">
                   Операции
                   {stats.count > 200 && (
                     <span className="text-[var(--text-muted)] font-normal text-xs ml-2">(показаны последние 200)</span>
                   )}
                 </h3>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {uncatCount > 0 && (
+                    <button
+                      onClick={runHeuristics}
+                      className={rowBtn}
+                      title="Эвристика: ключевые слова в контрагенте/назначении (офлайн, мгновенно)"
+                    >
+                      Категоризовать ({uncatCount})
+                    </button>
+                  )}
+                  <button
+                    onClick={aiCategorize}
+                    disabled={aiBusy || uncatCount === 0 || !hasUserCategories}
+                    title={
+                      !hasUserCategories
+                        ? 'Сначала добавьте хотя бы одну категорию в разделе «Категории» — ИИ назначает операции по категориям из вашего списка'
+                        : 'Локальный LLM (LM Studio) назначит категории из вашего списка операциям «Без категории» (до 60 шт. за раз)'
+                    }
+                    className="flex items-center gap-1.5 px-2.5 py-1 bg-indigo-500/10 border border-indigo-500/30 text-indigo-400 rounded-md text-[11px] font-medium hover:bg-indigo-500/20 disabled:opacity-50 transition-colors"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    {aiBusy ? 'Категоризация…' : 'ИИ (LM Studio)'}
+                  </button>
+                  {aiMsg && (
+                    <span className="text-[11px] text-[var(--text-muted)] max-w-[420px]">{aiMsg}</span>
+                  )}
+                </div>
               </div>
               <table className="w-full text-left border-collapse">
                 <thead>

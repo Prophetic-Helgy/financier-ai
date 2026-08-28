@@ -12,6 +12,7 @@ import {
 } from './schema';
 import { migrateStore } from './migrations';
 import { closedYMSet, ymOf } from './periods';
+import { heuristicCategory, ensureCategoryByName } from './categorize';
 import type { ParsedDocument, ParsedTransaction } from '../parsers/bankParsers';
 
 interface StoreApi {
@@ -88,6 +89,7 @@ export interface ImportResult {
   added: number;
   skipped: number; // дубликаты / некорректные суммы
   blocked: number; // операции в закрытых периодах (Фаза 3.5)
+  categorized: number; // автоматически категоризовано эвристикой (Фаза 3.7)
 }
 
 /** 'dd.mm.yyyy' / произвольный формат → 'YYYY-MM-DD' */
@@ -128,6 +130,8 @@ function counterpartyName(tx: ParsedTransaction): string {
  * Закрытые периоды (Фаза 3.5): операции с датой в закрытом месяце НЕ
  * импортируются (blocked) — закрытый месяц меняют только корректирующие
  * записи из вкладки «Учёт».
+ * Категории (Фаза 3.7): сначала эвристика по контрагенту/назначению,
+ * иначе встроенная «Без категории»; недостающие категории создаются.
  */
 export function importDocumentToStore(store: LedgerStore, doc: ParsedDocument, accountId?: string): ImportResult {
   let org = store.organizations.find(o => o.isDefault) || store.organizations[0];
@@ -179,6 +183,7 @@ export function importDocumentToStore(store: LedgerStore, doc: ParsedDocument, a
   let added = 0;
   let skipped = 0;
   let blocked = 0;
+  let categorized = 0;
   for (const tx of doc.transactions) {
     if (!Number.isFinite(tx.amount) || tx.amount === 0) { skipped++; continue; }
     if (closed.has(ymOf(normalizeDate(tx.date)))) { blocked++; continue; }
@@ -193,6 +198,10 @@ export function importDocumentToStore(store: LedgerStore, doc: ParsedDocument, a
     if (seen.has(key)) { skipped++; continue; }
     seen.add(key);
 
+    const kind: 'income' | 'expense' = tx.type === 'income' ? 'income' : 'expense';
+    const hit = heuristicCategory({ kind, counterparty: counterpartyName(tx), purpose: tx.purpose || '' });
+    if (hit) categorized++;
+
     store.transactions.push({
       id: createId(),
       orgId: org.id,
@@ -200,14 +209,14 @@ export function importDocumentToStore(store: LedgerStore, doc: ParsedDocument, a
       date: normalizeDate(tx.date),
       amount: Math.abs(tx.amount),
       currency: account.currency || 'RUB',
-      type: tx.type === 'income' ? 'income' : 'expense',
+      type: kind,
       counterpartyId: ensureCounterparty(counterpartyName(tx)),
-      category: ensureCategory(tx.type === 'income' ? 'income' : 'expense'),
+      category: hit ? ensureCategoryByName(store.categories, hit.name, hit.kind).name : ensureCategory(kind),
       purpose: (tx.purpose || '').trim(),
       source: doc.fileName,
       importedAt: now,
     });
     added++;
   }
-  return { added, skipped, blocked };
+  return { added, skipped, blocked, categorized };
 }

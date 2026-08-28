@@ -15,7 +15,7 @@ import { LedgerView } from "../components/LedgerView";
 import { SellerView } from "../components/SellerView";
 import { loadStore, saveStore, importDocumentToStore } from "../lib/store/store";
 import { createId } from "../lib/store/schema";
-import type { LedgerStore, BudgetGoal, Account, FxRate, Period, Transaction } from "../lib/store/schema";
+import type { LedgerStore, BudgetGoal, Account, FxRate, Period, Transaction, Category } from "../lib/store/schema";
 
 // recharts (~400КБ) грузится лениво — только при открытии вкладки «Аналитика»
 const RichAnalyticsReport = React.lazy(() =>
@@ -166,6 +166,20 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
       setLedger(saved);
     } catch (e) {
       console.error('[ledger] Ошибка сохранения операций:', e);
+    }
+  }, []);
+
+  // Сохранить категории (Фаза 3.7: ручное добавление/удаление, авто-создание эвристикой)
+  const persistCategories = useCallback(async (categories: Category[]) => {
+    try {
+      const base = ledgerRef.current || (await loadStore());
+      const next = structuredClone(base);
+      next.categories = categories;
+      const saved = await saveStore(next);
+      ledgerRef.current = saved;
+      setLedger(saved);
+    } catch (e) {
+      console.error('[ledger] Ошибка сохранения категорий:', e);
     }
   }, []);
 
@@ -360,12 +374,13 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
     try {
       const base = ledgerRef.current || (await loadStore());
       const next = structuredClone(base);
-      let added = 0, skipped = 0, blocked = 0;
+      let added = 0, skipped = 0, blocked = 0, categorized = 0;
       for (const doc of documents) {
         const r = importDocumentToStore(next, doc, importAccountId || undefined);
         added += r.added;
         skipped += r.skipped;
         blocked += r.blocked;
+        categorized += r.categorized;
       }
       const saved = await saveStore(next);
       ledgerRef.current = saved;
@@ -373,6 +388,7 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
       const parts: string[] = [];
       if (added > 0) parts.push(`Импортировано: ${added} новых операций`);
       else parts.push('Новых операций нет');
+      if (categorized > 0) parts.push(`автокатегоризировано: ${categorized}`);
       if (skipped > 0) parts.push(`пропущено ${skipped} (дубликаты / некорректные)`);
       if (blocked > 0) parts.push(`закрытые периоды: ${blocked} операций (откройте период или внесите корректировку)`);
       setLedgerMsg(parts.join(', '));
@@ -860,6 +876,7 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
                     onFxRatesChange={(r) => void persistFxRates(r)}
                     onPeriodsChange={(p) => void persistPeriods(p)}
                     onTransactionsChange={(t) => void persistTransactions(t)}
+                    onCategoriesChange={(c) => void persistCategories(c)}
                   />
                 ) : (
                   <div className="h-full flex items-center justify-center text-[var(--text-muted)] text-sm">
