@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from "react";
-import { ArrowLeft, ArrowUpRight, ArrowDownRight, FileText, BrainCircuit, Calculator, Settings2, Loader2, FileSpreadsheet, Presentation, Wallet, Plus, Trash2, Search, DownloadCloud, X, RotateCcw, SlidersHorizontal, Hash, Type, Landmark } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, ArrowDownRight, FileText, BrainCircuit, Calculator, Settings2, Loader2, FileSpreadsheet, Presentation, Wallet, Plus, Trash2, Search, DownloadCloud, X, RotateCcw, SlidersHorizontal, Hash, Type, Landmark, Store } from "lucide-react";
 import { FileUploader, FileData } from "../components/FileUploader";
 import { parseDocument, ParsedDocument } from "../lib/parsers/bankParsers";
 import { generateHeuristicPresentation, runLocalLLMPresentation } from "../lib/analyticsEngine";
@@ -11,6 +11,7 @@ import { getDefaultConfig, saveConfig, detectLocalLLM, LLMConfig } from "../lib/
 import { MockDashboardView } from "../components/MockDashboardView";
 import { LogViewer } from "../components/LogViewer";
 import { LedgerView } from "../components/LedgerView";
+import { SellerView } from "../components/SellerView";
 import { loadStore, saveStore, importDocumentToStore } from "../lib/store/store";
 import { createId } from "../lib/store/schema";
 import type { LedgerStore } from "../lib/store/schema";
@@ -35,7 +36,7 @@ interface DashboardProps {
 
 export function Dashboard({ mode, onBack }: DashboardProps) {
   const [documents, setDocuments] = useState<ParsedDocument[]>([]);
-  const [activeTab, setActiveTab] = useState<'table' | 'analytics' | 'presentation' | 'reportavail' | 'manual' | 'ledger' | 'export'>('analytics');
+  const [activeTab, setActiveTab] = useState<'table' | 'analytics' | 'presentation' | 'reportavail' | 'manual' | 'ledger' | 'export' | 'seller'>('analytics');
   const [presentationResult, setPresentationResult] = useState<string | null>(null);
   const [presentationError, setPresentationError] = useState<string | null>(null);
   const [isGeneratingPres, setIsGeneratingPres] = useState(false);
@@ -517,6 +518,7 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
               { key: 'manual', icon: Wallet, label: 'Активы' },
               { key: 'ledger', icon: Landmark, label: 'Учёт' },
               { key: 'export', icon: DownloadCloud, label: 'Экспорт' },
+              ...(mode === 'seller' ? [{ key: 'seller', icon: Store, label: 'Селлер' }] : []),
             ] as const).map(tab => (
               <button 
                 key={tab.key}
@@ -540,7 +542,7 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
               <ReportAvailability documents={documents} profile={mode as any} />
             ) : !hasAnyData && activeTab === 'analytics' ? (
               <MockDashboardView mode={mode} onUploadClick={handleTriggerUpload} />
-            ) : !hasAnyData && activeTab !== 'manual' && activeTab !== 'analytics' && activeTab !== 'ledger' ? (
+            ) : !hasAnyData && activeTab !== 'manual' && activeTab !== 'analytics' && activeTab !== 'ledger' && activeTab !== 'seller' ? (
               <div className="h-full flex flex-col items-center justify-center text-[var(--text-muted)] p-8 text-center">
                 <FileText className="w-12 h-12 mb-4 opacity-20" />
                 <span className="text-base font-medium">Данные для аналитики отсутствуют</span>
@@ -775,6 +777,11 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
                   <div className="h-full overflow-y-auto p-6">
                     <ExportReports document={combinedDocument} onExport={downloadBlob} />
                   </div>
+                )}
+
+                {/* Seller View (только профиль «Селлер маркетплейсов») */}
+                {activeTab === 'seller' && (
+                  <SellerView document={combinedDocument} />
                 )}
 
                 {/* Manual View */}
