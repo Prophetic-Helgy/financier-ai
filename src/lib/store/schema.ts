@@ -4,7 +4,7 @@
  * через цепочку миграций в migrations.ts (обратная совместимость).
  */
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 /** UUID с фолбэком для окружений без crypto.randomUUID */
 export function createId(): string {
@@ -90,6 +90,19 @@ export interface Period {
   closedAt: string | null;
 }
 
+/** Роль профиля (Фаза 3.6): admin — полный доступ, member — всё кроме закрытия периодов и бэкапов, viewer — только просмотр */
+export type UserRole = 'admin' | 'member' | 'viewer';
+
+/** Локальный профиль пользователя (семейный/совместный сценарий, Фаза 3.6) */
+export interface UserProfile {
+  id: string;
+  name: string;
+  role: UserRole;
+  /** Имена категорий, видимых профилю; пустой список = все (для admin всегда все) */
+  visibleCategories: string[];
+  createdAt: string;
+}
+
 /** Ручные записи вкладки «Активы» */
 export interface ManualEntryIncome { id: string; name: string; amount: number; freq: string }
 export interface ManualEntryCredit { id: string; name: string; amount: number; rate: number; scheme: string }
@@ -106,6 +119,8 @@ export interface LedgerStore {
   meta: {
     createdAt: string;
     updatedAt: string;
+    /** Активный профиль (Фаза 3.6); определяется в роли.ts, если отсутствует */
+    currentUserId?: string;
   };
   organizations: Organization[];
   accounts: Account[];
@@ -115,16 +130,18 @@ export interface LedgerStore {
   budgets: BudgetGoal[];
   fxRates: FxRate[];
   periods: Period[];
+  users: UserProfile[];
   manual: ManualEntries;
 }
 
-/** Пустое хранилище: организация + основной счёт + встроенные категории */
+/** Пустое хранилище: организация + основной счёт + встроенные категории + владелец */
 export function createEmptyStore(): LedgerStore {
   const now = new Date().toISOString();
   const orgId = createId();
+  const ownerId = createId();
   return {
     schemaVersion: SCHEMA_VERSION,
-    meta: { createdAt: now, updatedAt: now },
+    meta: { createdAt: now, updatedAt: now, currentUserId: ownerId },
     organizations: [{ id: orgId, name: 'Моя организация', isDefault: true, createdAt: now }],
     accounts: [{ id: createId(), orgId, name: 'Основной счёт', kind: 'bank', currency: 'RUB', createdAt: now }],
     counterparties: [],
@@ -136,6 +153,7 @@ export function createEmptyStore(): LedgerStore {
     budgets: [],
     fxRates: [],
     periods: [],
+    users: [{ id: ownerId, name: 'Владелец', role: 'admin', visibleCategories: [], createdAt: now }],
     manual: { incomes: [], credits: [], assets: [] },
   };
 }

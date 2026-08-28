@@ -108,7 +108,7 @@ function main() {
   check('мусорный курс (NaN) не добавлен', !merged.some(r => r.code === 'XXX'));
   check('итого 3 записи', merged.length === 3, String(merged.length));
 
-  console.log('\n[6] Миграция v1 → v2');
+  console.log('\n[6] Миграция v1 → v3 (цепочка 2 шага)');
   const v1: any = {
     schemaVersion: 1,
     meta: { createdAt: 'x', updatedAt: 'x' },
@@ -123,9 +123,10 @@ function main() {
     budgets: [], periods: [], manual: { incomes: [], credits: [], assets: [] },
   };
   const s2 = migrateStore(v1);
-  check('schemaVersion = 2', s2.schemaVersion === 2);
+  check('schemaVersion = 3 (v1 → v2 → v3)', s2.schemaVersion === 3);
   check('старая операция получила currency = RUB', s2.transactions[0].currency === 'RUB');
   check('fxRates = []', Array.isArray(s2.fxRates) && s2.fxRates.length === 0);
+  check('создан профиль-владелец (Фаза 3.6)', s2.users.length === 1 && s2.users[0].role === 'admin');
   check('остальные данные не тронуты (amount 100, 1 транзакция)', s2.transactions.length === 1 && s2.transactions[0].amount === 100);
 
   console.log('\n[7] Импорт: валюта счёта + дедупликация по валюте');

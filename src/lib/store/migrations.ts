@@ -1,4 +1,4 @@
-import { LedgerStore, SCHEMA_VERSION, createEmptyStore } from './schema';
+import { LedgerStore, SCHEMA_VERSION, createEmptyStore, createId } from './schema';
 
 /**
  * Цепочка миграций: ключ — целевая версия, функция превращает
@@ -17,6 +17,24 @@ const MIGRATIONS: Record<number, (s: any) => any> = {
     fxRates: Array.isArray(v1.fxRates) ? v1.fxRates : [],
     schemaVersion: 2,
   }),
+  // v2 → v3 (Фаза 3.6, семейный сценарий): добавляем профили пользователей.
+  // Старым данным создаём профиль-владельца (admin); activeUserId берём
+  // из meta, если он ссылается на существующего пользователя.
+  3: (v2) => {
+    const users = Array.isArray(v2.users) && v2.users.length > 0
+      ? v2.users
+      : [{ id: createId(), name: 'Владелец', role: 'admin', visibleCategories: [], createdAt: new Date().toISOString() }];
+    const currentUserId =
+      typeof v2.meta?.currentUserId === 'string' && users.some((u: any) => u.id === v2.meta.currentUserId)
+        ? v2.meta.currentUserId
+        : users[0].id;
+    return {
+      ...v2,
+      users,
+      meta: { ...(v2.meta || {}), currentUserId },
+      schemaVersion: 3,
+    };
+  },
 };
 
 /**

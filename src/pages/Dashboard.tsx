@@ -15,7 +15,8 @@ import { LedgerView } from "../components/LedgerView";
 import { SellerView } from "../components/SellerView";
 import { loadStore, saveStore, importDocumentToStore } from "../lib/store/store";
 import { createId } from "../lib/store/schema";
-import type { LedgerStore, BudgetGoal, Account, FxRate, Period, Transaction, Category } from "../lib/store/schema";
+import type { LedgerStore, BudgetGoal, Account, FxRate, Period, Transaction, Category, UserProfile } from "../lib/store/schema";
+import { can, currentProfile } from "../lib/store/roles";
 
 // recharts (~400КБ) грузится лениво — только при открытии вкладки «Аналитика»
 const RichAnalyticsReport = React.lazy(() =>
@@ -180,6 +181,33 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
       setLedger(saved);
     } catch (e) {
       console.error('[ledger] Ошибка сохранения категорий:', e);
+    }
+  }, []);
+
+  // Сохранить профили / активный профиль (Фаза 3.6: семейный сценарий, роли)
+  const persistUsers = useCallback(async (users: UserProfile[]) => {
+    try {
+      const base = ledgerRef.current || (await loadStore());
+      const next = structuredClone(base);
+      next.users = users;
+      const saved = await saveStore(next);
+      ledgerRef.current = saved;
+      setLedger(saved);
+    } catch (e) {
+      console.error('[ledger] Ошибка сохранения профилей:', e);
+    }
+  }, []);
+
+  const persistCurrentProfile = useCallback(async (userId: string) => {
+    try {
+      const base = ledgerRef.current || (await loadStore());
+      const next = structuredClone(base);
+      next.meta = { ...next.meta, currentUserId: userId };
+      const saved = await saveStore(next);
+      ledgerRef.current = saved;
+      setLedger(saved);
+    } catch (e) {
+      console.error('[ledger] Ошибка переключения профиля:', e);
     }
   }, []);
 
@@ -399,6 +427,9 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
     }
   }, [documents, ledgerBusy, importAccountId]);
 
+  // Фаза 3.6: роль активного профиля управляет доступностью импорта
+  const canImportNow = ledger ? can(currentProfile(ledger).role, 'import') : true;
+
   // Перечитать хранилище с диска (после восстановления) и синхронизировать state
   const reloadLedger = useCallback(async () => {
     const s = await loadStore(true);
@@ -550,9 +581,9 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
               )}
               <button
                 onClick={handleImportToLedger}
-                disabled={ledgerBusy}
+                disabled={ledgerBusy || !canImportNow}
                 className="w-full flex items-center justify-center gap-1.5 bg-indigo-500/10 border border-indigo-500/30 text-indigo-400 px-3 py-2 rounded-md hover:bg-indigo-500/20 transition-colors text-[11px] font-medium disabled:opacity-50"
-                title="Сохранить операции загруженных документов в локальном хранилище"
+                title={canImportNow ? 'Сохранить операции загруженных документов в локальном хранилище' : 'Импорт недоступен для текущей роли профиля (наблюдатель)'}
               >
                 <Landmark className="w-3 h-3" />
                 {ledgerBusy ? 'Импорт...' : 'Импортировать в учёт'}
@@ -877,6 +908,8 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
                     onPeriodsChange={(p) => void persistPeriods(p)}
                     onTransactionsChange={(t) => void persistTransactions(t)}
                     onCategoriesChange={(c) => void persistCategories(c)}
+                    onProfileChange={(id) => void persistCurrentProfile(id)}
+                    onUsersChange={(u) => void persistUsers(u)}
                   />
                 ) : (
                   <div className="h-full flex items-center justify-center text-[var(--text-muted)] text-sm">

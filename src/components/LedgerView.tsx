@@ -1,6 +1,9 @@
 import React, { useMemo, useState } from 'react';
-import { Landmark, FileDown, FileUp, RotateCcw, Target, Trash2, Coins, Wallet, CalendarClock, Tags, Sparkles } from 'lucide-react';
-import { LedgerStore, BudgetGoal, Account, FxRate, Period, Transaction, Category, createId } from '../lib/store/schema';
+import { Landmark, FileDown, FileUp, RotateCcw, Target, Trash2, Coins, Wallet, CalendarClock, Tags, Sparkles, Users } from 'lucide-react';
+import { LedgerStore, BudgetGoal, Account, FxRate, Period, Transaction, Category, UserProfile, createId } from '../lib/store/schema';
+import type { UserRole } from '../lib/store/schema';
+import { ROLE_LABELS, can, currentProfile, visibleTransactions } from '../lib/store/roles';
+import type { RoleAction } from '../lib/store/roles';
 import { budgetSummary, monthForecast, currentYM, daysInMonth } from '../lib/store/budgets';
 import {
   totalsInBase, currencyBreakdown, monthFxGainLoss, toBase,
@@ -26,6 +29,8 @@ interface LedgerViewProps {
   onPeriodsChange: (periods: Period[]) => void;
   onTransactionsChange: (transactions: Transaction[]) => void;
   onCategoriesChange: (categories: Category[]) => void;
+  onProfileChange: (userId: string) => void;
+  onUsersChange: (users: UserProfile[]) => void;
 }
 
 const COMMON_CURRENCIES = ['USD', 'EUR', 'GBP', 'CNY', 'KZT', 'BYN', 'AMD', 'AZN', 'UZS', 'PLN', 'TRY'];
@@ -79,34 +84,41 @@ function DeltaChip({ value }: { value: number | null }) {
  * Вкладка «Учёт»: что сохранено в хранилище (переживает перезапуск),
  * итоги, разбивка по месяцам, журнал операций, бэкапы.
  */
-export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onRestoreLatestBackup, onBudgetsChange, onAccountsChange, onFxRatesChange, onPeriodsChange, onTransactionsChange, onCategoriesChange }: LedgerViewProps) {
+export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onRestoreLatestBackup, onBudgetsChange, onAccountsChange, onFxRatesChange, onPeriodsChange, onTransactionsChange, onCategoriesChange, onProfileChange, onUsersChange }: LedgerViewProps) {
+  // Фаза 3.6: активный профиль, его видимые операции и доступ к действиям по роли.
+  // view — «срез» хранилища с отфильтрованными операциями для periodRows/budgetSummary.
+  const profile = currentProfile(store);
+  const txs = useMemo(() => visibleTransactions(store), [store]);
+  const view = useMemo(() => ({ ...store, transactions: txs }), [store, txs]);
+  const canDo = (a: RoleAction) => can(profile.role, a);
+
   // Фаза 3.3: итоги — в базовой валюте (RUB), валютные операции по курсу на дату
   const stats = useMemo(() => {
-    const base = totalsInBase(store.transactions, store.fxRates);
+    const base = totalsInBase(txs, store.fxRates);
     return {
       ...base,
       balance: base.net,
-      count: store.transactions.length,
+      count: txs.length,
       // подписка «в т.ч. X USD …» — только для не-базовых валют
-      sub: currencyBreakdown(store.transactions)
+      sub: currencyBreakdown(txs)
         .filter(c => c.currency !== BASE_CURRENCY)
         .map(c => `${fmt(c.net)} ${c.currency}`)
         .join(' · ') || undefined,
     };
-  }, [store.transactions, store.fxRates]);
+  }, [txs, store.fxRates]);
 
   const cpName = useMemo(() => new Map(store.counterparties.map(c => [c.id, c.name])), [store.counterparties]);
 
   const txSorted = useMemo(
-    () => [...store.transactions]
+    () => [...txs]
       .sort((a, b) => (b.date + b.importedAt).localeCompare(a.date + a.importedAt))
       .slice(0, 200),
-    [store.transactions]
+    [txs]
   );
 
   const byMonth = useMemo(() => {
     const m = new Map<string, { income: number; expense: number }>();
-    for (const t of store.transactions) {
+    for (const t of txs) {
       const key = (t.date || '').slice(0, 7);
       if (!/^\d{4}-\d{2}$/.test(key)) continue;
       const cur = m.get(key) || { income: 0, expense: 0 };
@@ -115,12 +127,12 @@ export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onResto
       m.set(key, cur);
     }
     // курсовые разницы месяца (переоценка валютных остатков) — только если есть валютные операции
-    const hasForeign = store.transactions.some(t => (t.currency || BASE_CURRENCY).toUpperCase() !== BASE_CURRENCY);
+    const hasForeign = txs.some(t => (t.currency || BASE_CURRENCY).toUpperCase() !== BASE_CURRENCY);
     return [...m.entries()]
       .sort((a, b) => b[0].localeCompare(a[0]))
       .slice(0, 12)
-      .map(([ym, v]) => [ym, { ...v, fx: hasForeign ? monthFxGainLoss(store.transactions, ym, store.fxRates) : 0 }] as const);
-  }, [store.transactions, store.fxRates]);
+      .map(([ym, v]) => [ym, { ...v, fx: hasForeign ? monthFxGainLoss(txs, ym, store.fxRates) : 0 }] as const);
+  }, [txs, store.fxRates]);
 
   const backupBtn = "flex items-center gap-1.5 px-3 py-1.5 bg-[var(--surface-inner)] border border-[var(--border)] rounded-md text-[11px] text-[var(--text-muted)] hover:text-[var(--fg)] transition-colors disabled:opacity-50";
   const rowBtn = "px-2 py-1 bg-[var(--surface-inner)] border border-[var(--border)] rounded-md text-[11px] text-[var(--text-muted)] hover:text-[var(--fg)] transition-colors";
@@ -135,18 +147,18 @@ export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onResto
 
   const ymOptions = useMemo(() => {
     const set = new Set<string>([curYM]);
-    for (const t of store.transactions) {
+    for (const t of txs) {
       const ym = (t.date || '').slice(0, 7);
       if (/^\d{4}-\d{2}$/.test(ym)) set.add(ym);
     }
     return [...set].sort((a, b) => b.localeCompare(a));
-  }, [store.transactions, curYM]);
+  }, [txs, curYM]);
 
-  const summary = useMemo(() => budgetSummary(store, budgetYM), [store, budgetYM]);
+  const summary = useMemo(() => budgetSummary(view, budgetYM), [view, budgetYM]);
 
   const isCurrentYM = budgetYM === curYM;
   const asOfDay = isCurrentYM ? new Date().getDate() : budgetYM < curYM ? daysInMonth(budgetYM) : 0;
-  const forecast = useMemo(() => monthForecast(store.transactions, budgetYM, asOfDay), [store.transactions, budgetYM, asOfDay]);
+  const forecast = useMemo(() => monthForecast(txs, budgetYM, asOfDay), [txs, budgetYM, asOfDay]);
 
   const orgId = store.organizations[0]?.id || '';
   const addBudget = () => {
@@ -176,9 +188,9 @@ export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onResto
 
   const accTxCount = useMemo(() => {
     const m = new Map<string, number>();
-    for (const t of store.transactions) m.set(t.accountId, (m.get(t.accountId) || 0) + 1);
+    for (const t of txs) m.set(t.accountId, (m.get(t.accountId) || 0) + 1);
     return m;
-  }, [store.transactions]);
+  }, [txs]);
 
   const addAccount = () => {
     const name = accName.trim();
@@ -243,7 +255,7 @@ export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onResto
   };
 
   const showFxSection = store.fxRates.length > 0
-    || store.transactions.some(t => (t.currency || BASE_CURRENCY).toUpperCase() !== BASE_CURRENCY)
+    || txs.some(t => (t.currency || BASE_CURRENCY).toUpperCase() !== BASE_CURRENCY)
     || store.accounts.some(a => (a.currency || 'RUB').toUpperCase() !== BASE_CURRENCY);
   const ratesSorted = useMemo(
     () => [...store.fxRates].sort((a, b) => (b.date + b.code).localeCompare(a.date + a.code)).slice(0, 50),
@@ -252,8 +264,8 @@ export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onResto
 
   // Фаза 3.5: периоды — закрытие/открытие, корректирующие записи, MTD/YTD
   const today = new Date().toISOString().slice(0, 10);
-  const periodTable = useMemo(() => periodRows(store), [store]);
-  const mtdYtdData = useMemo(() => mtdYtd(store.transactions, store.fxRates, today), [store.transactions, store.fxRates, today]);
+  const periodTable = useMemo(() => periodRows(view), [view]);
+  const mtdYtdData = useMemo(() => mtdYtd(txs, store.fxRates, today), [txs, store.fxRates, today]);
 
   const [correctionYM, setCorrectionYM] = useState<string | null>(null);
   const [corrDate, setCorrDate] = useState('');
@@ -305,14 +317,14 @@ export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onResto
 
   const catCount = useMemo(() => {
     const m = new Map<string, number>();
-    for (const t of store.transactions) m.set(t.category, (m.get(t.category) || 0) + 1);
+    for (const t of txs) m.set(t.category, (m.get(t.category) || 0) + 1);
     return m;
-  }, [store.transactions]);
+  }, [txs]);
 
   // Без корректировок: они живут в закрытых месяцах и не перекатегоризируются (Фаза 3.5)
   const uncatCount = useMemo(
-    () => store.transactions.filter(t => t.category === UNCATEGORIZED && !t.correction).length,
-    [store.transactions]);
+    () => txs.filter(t => t.category === UNCATEGORIZED && !t.correction).length,
+    [txs]);
 
   const addCategory = () => {
     const name = catName.trim();
@@ -330,20 +342,57 @@ export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onResto
     onCategoriesChange(store.categories.filter(x => x.id !== id));
   };
 
-  // Эвристика: по ключевым словам в контрагенте/назначении (офлайн, детерминированно)
+  // Эвристика: по ключевым словам в контрагенте/назначении (офлайн, детерминированно).
+  // Фаза 3.6: работает только над видимыми активному профилю операциями.
   const runHeuristics = () => {
-    const transactions = store.transactions.map(t => ({ ...t }));
+    const visibleIds = new Set(txs.map(t => t.id));
+    const all = store.transactions.map(t => ({ ...t }));
+    const scoped = all.filter(t => visibleIds.has(t.id));
     const categories = [...store.categories];
-    const changed = applyHeuristics({ transactions, categories, counterparties: store.counterparties });
+    const changed = applyHeuristics({ transactions: scoped, categories, counterparties: store.counterparties });
     if (changed > 0) {
-      onTransactionsChange(transactions);
+      const byId = new Map(scoped.map(t => [t.id, t]));
+      onTransactionsChange(all.map(t => byId.get(t.id) || t));
       onCategoriesChange(categories);
     }
   };
 
-  // ИИ: локальный LLM (LM Studio) категоризирует «Без категории»
+  // Фаза 3.6: управление профилями (только владелец)
+  const [editingVisibilityId, setEditingVisibilityId] = useState<string | null>(null);
+  const [newProfileName, setNewProfileName] = useState('');
+  const [newProfileRole, setNewProfileRole] = useState<UserRole>('member');
+  const adminCount = store.users.filter(u => u.role === 'admin').length;
+
+  const addProfile = () => {
+    const name = newProfileName.trim();
+    if (!name) return;
+    onUsersChange([...store.users, { id: createId(), name, role: newProfileRole, visibleCategories: [], createdAt: new Date().toISOString() }]);
+    setNewProfileName('');
+  };
+  const removeProfile = (id: string) => {
+    const u = store.users.find(x => x.id === id);
+    if (!u || u.role === 'admin' || id === profile.id) return;
+    onUsersChange(store.users.filter(x => x.id !== id));
+  };
+  const changeProfileRole = (id: string, role: UserRole) => {
+    const u = store.users.find(x => x.id === id);
+    if (!u || u.role === role) return;
+    // Нельзя понизить последнего владельца и собственный активный admin-профиль
+    if (u.role === 'admin' && role !== 'admin' && (adminCount <= 1 || id === profile.id)) return;
+    onUsersChange(store.users.map(x => x.id === id ? { ...x, role } : x));
+  };
+  const toggleVisibility = (id: string, catName: string, on: boolean) => {
+    onUsersChange(store.users.map(x => x.id === id ? {
+      ...x,
+      visibleCategories: on
+        ? [...x.visibleCategories, catName]
+        : x.visibleCategories.filter(c => c.toLowerCase() !== catName.toLowerCase()),
+    } : x));
+  };
+
+  // ИИ: локальный LLM (LM Studio) категоризирует «Без категории» (видимые операции)
   const aiCategorize = async () => {
-    const uncat = store.transactions.filter(t => t.category === UNCATEGORIZED && !t.correction);
+    const uncat = txs.filter(t => t.category === UNCATEGORIZED && !t.correction);
     if (uncat.length === 0) return;
     setAiBusy(true);
     setAiMsg(null);
@@ -395,12 +444,137 @@ export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onResto
             <button onClick={onExportBackup} disabled={busy} className={backupBtn} title="Сохранить копию данных в выбранный файл">
               <FileDown className="w-3.5 h-3.5" /> Экспорт бэкапа
             </button>
-            <button onClick={onRestoreFile} disabled={busy} className={backupBtn} title="Заменить данные файлом бэкапа">
+            <button
+              onClick={onRestoreFile}
+              disabled={busy || !canDo('restore')}
+              className={backupBtn}
+              title={canDo('restore') ? 'Заменить данные файлом бэкапа' : 'Недоступно для текущей роли (только владелец)'}
+            >
               <FileUp className="w-3.5 h-3.5" /> Из файла
             </button>
-            <button onClick={onRestoreLatestBackup} disabled={busy} className={backupBtn} title="Восстановить последний автоматический бэкап">
+            <button
+              onClick={onRestoreLatestBackup}
+              disabled={busy || !canDo('restore')}
+              className={backupBtn}
+              title={canDo('restore') ? 'Восстановить последний автоматический бэкап' : 'Недоступно для текущей роли (только владелец)'}
+            >
               <RotateCcw className="w-3.5 h-3.5" /> Авто-бэкап
             </button>
+          </div>
+        </div>
+
+        {/* Профили (Фаза 3.6): семейный/совместный сценарий — роли и видимость категорий */}
+        <div className="mb-6 bg-[var(--surface)] border border-[var(--border)] rounded-xl overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-[var(--border)] bg-[var(--surface-inner)]/50">
+            <h3 className="font-semibold text-sm text-[var(--fg)] flex items-center gap-1.5">
+              <Users className="w-3.5 h-3.5 text-[var(--text-muted)]" /> Профили (кто видит что)
+            </h3>
+          </div>
+          <div className="p-4 space-y-3">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[11px] text-[var(--text-muted)]">Текущий профиль:</span>
+              <select
+                value={profile.id}
+                onChange={e => onProfileChange(e.target.value)}
+                className="bg-[var(--surface-inner)] border border-[var(--border)] rounded-md text-xs text-[var(--fg)] px-2 py-1.5"
+              >
+                {store.users.map(u => (
+                  <option key={u.id} value={u.id}>{u.name} — {ROLE_LABELS[u.role] || u.role}</option>
+                ))}
+              </select>
+              <span className={cn(
+                "text-[10px] font-medium px-1.5 py-0.5 rounded",
+                profile.role === 'admin' ? 'bg-indigo-500/15 text-indigo-400'
+                  : profile.role === 'member' ? 'bg-emerald-500/15 text-emerald-500'
+                    : 'bg-[var(--surface-inner)] text-[var(--text-muted)]'
+              )}>{ROLE_LABELS[profile.role] || profile.role}</span>
+              {profile.role !== 'admin' && (profile.visibleCategories || []).length > 0 && (
+                <span className="text-[10px] text-[var(--text-muted)]">видит категории: {profile.visibleCategories.join(', ')}</span>
+              )}
+            </div>
+            {profile.role === 'admin' && (
+              <>
+                <div className="space-y-1.5">
+                  {store.users.map(u => (
+                    <div key={u.id} className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs text-[var(--fg)] w-40 truncate">{u.name}</span>
+                      <select
+                        value={u.role}
+                        onChange={e => changeProfileRole(u.id, e.target.value as UserRole)}
+                        disabled={u.role === 'admin' && (adminCount <= 1 || u.id === profile.id)}
+                        title={u.role === 'admin' && (adminCount <= 1 || u.id === profile.id)
+                          ? 'Нельзя понизить последнего владельца (или самого себя)'
+                          : 'Роль профиля'}
+                        className={fieldCls}
+                      >
+                        {(Object.keys(ROLE_LABELS) as UserRole[]).map(r => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
+                      </select>
+                      {u.role !== 'admin' && (
+                        <button onClick={() => setEditingVisibilityId(editingVisibilityId === u.id ? null : u.id)} className={rowBtn}>
+                          {editingVisibilityId === u.id ? 'Скрыть список' : 'Категории (видимость)'}
+                        </button>
+                      )}
+                      <button
+                        onClick={() => removeProfile(u.id)}
+                        disabled={u.role === 'admin' || u.id === profile.id}
+                        title={u.role === 'admin' ? 'Профиль владельца не удаляется' : u.id === profile.id ? 'Нельзя удалить свой активный профиль' : 'Удалить профиль'}
+                        className="p-1 text-[var(--text-muted)] hover:text-rose-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                {editingVisibilityId && (() => {
+                  const u = store.users.find(x => x.id === editingVisibilityId);
+                  if (!u) return null;
+                  return (
+                    <div className="bg-[var(--surface-inner)] rounded-lg p-3">
+                      <div className="text-[11px] text-[var(--text-muted)] mb-2">
+                        {u.name}: отмеченные категории видны, остальные операции в итогах этого профиля не участвуют. Пустой список — видит всё.
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {store.categories.map(c => (
+                          <label key={c.id} className="flex items-center gap-1.5 text-xs text-[var(--fg)] cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={u.visibleCategories.some(x => x.toLowerCase() === c.name.toLowerCase())}
+                              onChange={e => toggleVisibility(u.id, c.name, e.target.checked)}
+                            />
+                            {c.name} ({c.kind === 'income' ? 'доход' : 'расход'})
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
+                <div className="flex items-center gap-2 flex-wrap pt-1">
+                  <input
+                    value={newProfileName}
+                    onChange={e => setNewProfileName(e.target.value)}
+                    placeholder="Имя профиля (например: Супруг)"
+                    className="bg-[var(--surface-inner)] border border-[var(--border)] rounded-md text-xs text-[var(--fg)] px-2.5 py-1.5 w-48"
+                  />
+                  <select
+                    value={newProfileRole}
+                    onChange={e => setNewProfileRole(e.target.value as UserRole)}
+                    className="bg-[var(--surface-inner)] border border-[var(--border)] rounded-md text-xs text-[var(--fg)] px-2 py-1.5"
+                  >
+                    {(Object.keys(ROLE_LABELS) as UserRole[]).map(r => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
+                  </select>
+                  <button
+                    onClick={addProfile}
+                    disabled={!newProfileName.trim()}
+                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 rounded-md text-xs font-medium text-white transition-colors"
+                  >
+                    Добавить профиль
+                  </button>
+                  <span className="text-[10px] text-[var(--text-muted)]">
+                    Локальные профили: роль определяет доступ к действиям, список категорий — видимость операций.
+                  </span>
+                </div>
+              </>
+            )}
           </div>
         </div>
 
@@ -442,8 +616,8 @@ export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onResto
                     <span className="text-[10px] text-[var(--text-muted)]">{n} оп.</span>
                     <button
                       onClick={() => removeAccount(a.id)}
-                      disabled={n > 0 || store.accounts.length <= 1}
-                      title={n > 0 ? `Нельзя удалить: ${n} операций` : 'Удалить счёт'}
+                      disabled={!canDo('accounts') || n > 0 || store.accounts.length <= 1}
+                      title={!canDo('accounts') ? 'Недоступно для текущей роли' : n > 0 ? `Нельзя удалить: ${n} операций` : 'Удалить счёт'}
                       className="p-0.5 text-[var(--text-muted)] hover:text-rose-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                     >
                       <Trash2 className="w-3 h-3" />
@@ -478,7 +652,7 @@ export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onResto
               </datalist>
               <button
                 onClick={addAccount}
-                disabled={!accName.trim()}
+                disabled={!canDo('accounts') || !accName.trim()}
                 className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 rounded-md text-xs font-medium text-white transition-colors"
               >
                 Добавить счёт
@@ -506,7 +680,7 @@ export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onResto
                 />
                 <button
                   onClick={fetchCbrRates}
-                  disabled={cbrBusy || !/^\d{4}-\d{2}-\d{2}$/.test(cbrDate)}
+                  disabled={!canDo('fxRates') || cbrBusy || !/^\d{4}-\d{2}-\d{2}$/.test(cbrDate)}
                   className="px-2.5 py-1 bg-indigo-500/10 border border-indigo-500/30 text-indigo-400 rounded-md text-[11px] font-medium hover:bg-indigo-500/20 disabled:opacity-50 transition-colors"
                 >
                   {cbrBusy ? 'Загрузка...' : 'Загрузить с ЦБ РФ'}
@@ -539,8 +713,9 @@ export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onResto
                         <td className="py-1 text-right">
                           <button
                             onClick={() => removeRate(r.id)}
-                            title="Удалить курс"
-                            className="p-1 text-[var(--text-muted)] hover:text-rose-500 transition-colors"
+                            disabled={!canDo('fxRates')}
+                            title={canDo('fxRates') ? 'Удалить курс' : 'Недоступно для текущей роли'}
+                            className="p-1 text-[var(--text-muted)] hover:text-rose-500 disabled:opacity-30 transition-colors"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -573,7 +748,7 @@ export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onResto
                 />
                 <button
                   onClick={addRate}
-                  disabled={!fxCode.trim() || fxRate.trim() === ''}
+                  disabled={!canDo('fxRates') || !fxCode.trim() || fxRate.trim() === ''}
                   className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 rounded-md text-xs font-medium text-white transition-colors"
                 >
                   Добавить курс
@@ -683,8 +858,9 @@ export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onResto
                       <td className="py-1 text-right">
                         <button
                           onClick={() => removeBudget(l.category)}
-                          title="Удалить бюджет"
-                          className="p-1 text-[var(--text-muted)] hover:text-rose-500 transition-colors"
+                          disabled={!canDo('budgets')}
+                          title={canDo('budgets') ? 'Удалить бюджет' : 'Недоступно для текущей роли'}
+                          className="p-1 text-[var(--text-muted)] hover:text-rose-500 disabled:opacity-30 transition-colors"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -717,7 +893,7 @@ export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onResto
               />
               <button
                 onClick={addBudget}
-                disabled={!bCat.trim() || bLimit.trim() === ''}
+                disabled={!canDo('budgets') || !bCat.trim() || bLimit.trim() === ''}
                 className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 rounded-md text-xs font-medium text-white transition-colors"
               >
                 Добавить бюджет
@@ -774,7 +950,9 @@ export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onResto
                         {row.count}{row.corrections > 0 && ` (${row.corrections} корр.)`}
                       </td>
                       <td className="py-2 text-right whitespace-nowrap">
-                        {row.closed ? (
+                        {!canDo('periods') ? (
+                          <span className="text-[10px] text-[var(--text-muted)]" title="Действия с периодами доступны только владельцу">—</span>
+                        ) : row.closed ? (
                           <>
                             <button onClick={() => openCorrection(row.ym)} className={rowBtn + " mr-1.5"}>Корректировка</button>
                             <button onClick={() => togglePeriod(row.ym, false)} className={rowBtn} title="Открыть период: импорт в него снова станет возможен">Открыть снова</button>
@@ -857,8 +1035,8 @@ export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onResto
                     <span className="text-[10px] text-[var(--text-muted)]">{n} оп.</span>
                     <button
                       onClick={() => removeCategory(c.id)}
-                      disabled={c.builtin || n > 0}
-                      title={c.builtin ? 'Встроенная категория — не удаляется' : n > 0 ? `Нельзя удалить: ${n} операций` : 'Удалить категорию'}
+                      disabled={!canDo('categories') || c.builtin || n > 0}
+                      title={!canDo('categories') ? 'Недоступно для текущей роли' : c.builtin ? 'Встроенная категория — не удаляется' : n > 0 ? `Нельзя удалить: ${n} операций` : 'Удалить категорию'}
                       className="p-0.5 text-[var(--text-muted)] hover:text-rose-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                     >
                       <Trash2 className="w-3 h-3" />
@@ -884,7 +1062,7 @@ export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onResto
               </select>
               <button
                 onClick={addCategory}
-                disabled={!catName.trim()}
+                disabled={!canDo('categories') || !catName.trim()}
                 className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 rounded-md text-xs font-medium text-white transition-colors"
               >
                 Добавить категорию
@@ -896,13 +1074,16 @@ export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onResto
           </div>
         </div>
 
-        {store.transactions.length === 0 ? (
+        {txs.length === 0 ? (
           <div className="h-64 flex flex-col items-center justify-center text-center text-[var(--text-muted)]">
             <Landmark className="w-10 h-10 mb-3 opacity-20" />
-            <p className="text-sm font-medium">В учёте пока нет операций</p>
+            <p className="text-sm font-medium">
+              {store.transactions.length === 0 ? 'В учёте пока нет операций' : 'Для этого профиля нет видимых операций'}
+            </p>
             <p className="text-xs mt-1">
-              Загрузите выписку в левой панели и нажмите «Импортировать в учёт» —
-              данные сохранятся между запусками.
+              {store.transactions.length === 0
+                ? 'Загрузите выписку в левой панели и нажмите «Импортировать в учёт» — данные сохранятся между запусками.'
+                : 'Профиль видит операции по выбранным категориям — попросите владельца настроить видимость в разделе «Профили».'}
             </p>
           </div>
         ) : (
@@ -977,15 +1158,16 @@ export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onResto
                   {uncatCount > 0 && (
                     <button
                       onClick={runHeuristics}
+                      disabled={!canDo('categorize')}
                       className={rowBtn}
-                      title="Эвристика: ключевые слова в контрагенте/назначении (офлайн, мгновенно)"
+                      title={canDo('categorize') ? 'Эвристика: ключевые слова в контрагенте/назначении (офлайн, мгновенно)' : 'Недоступно для текущей роли'}
                     >
                       Категоризовать ({uncatCount})
                     </button>
                   )}
                   <button
                     onClick={aiCategorize}
-                    disabled={aiBusy || uncatCount === 0 || !hasUserCategories}
+                    disabled={!canDo('categorize') || aiBusy || uncatCount === 0 || !hasUserCategories}
                     title={
                       !hasUserCategories
                         ? 'Сначала добавьте хотя бы одну категорию в разделе «Категории» — ИИ назначает операции по категориям из вашего списка'
