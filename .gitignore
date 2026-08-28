@@ -29,3 +29,5 @@ test-report.html
 
 # Локальные кэши инструментов
 .impeccable/
+# Кэш языковых моделей OCR (tesseract.js в Node-тестах скачивает в cwd)
+*.traineddata

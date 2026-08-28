@@ -554,7 +554,8 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
                     <FileText className={cn("h-3.5 w-3.5 shrink-0", config.color)} />
                     <div className="overflow-hidden min-w-0">
                       <div className="text-xs font-medium text-[var(--fg)] truncate">{doc.fileName}</div>
-                      <div className="text-[10px] text-[var(--text-muted)]">
+                      <div className="text-[10px] text-[var(--text-muted)]" title={doc.ocrUsed ? 'Скан: текст извлечён через OCR (tesseract.js, рус)' : undefined}>
+                        {doc.ocrUsed && <span className="text-cyan-400 font-medium">OCR · </span>}
                         {doc.transactions.length > 0 ? `${doc.transactions.length} оп.` : `~${Math.floor(doc.rawText.length/1000)}kb`}
                       </div>
                     </div>

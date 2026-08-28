@@ -1,6 +1,7 @@
 import { parseBankStatement } from "./bankProfiles";
+import { looksLikeScan, canOcr, ocrPdfScanPages } from "../ocr/ocr";
 
-// Тяжёлые библиотеки (xlsx ~450КБ, pdfjs-dist, mammoth) грузим лениво —
+// Тяжёлые библиотеки (xlsx ~450КБ, pdfjs-dist, mammoth, tesseract.js) грузим лениво —
 // они вынесены из основного чанка и загружаются при первом парсинге документа.
 let pdfjsPromise: Promise<typeof import("pdfjs-dist")> | null = null;
 function getPdfjs() {
@@ -36,6 +37,8 @@ export interface ParsedDocument {
   rawText: string;
   fileName: string;
   extractedMetrics?: Record<string, number>;
+  /** Фаза 3.2: документ — скан, текст извлечён OCR (tesseract.js, rus) */
+  ocrUsed?: boolean;
 }
 
 function extractMetricsFromText(text: string): Record<string, number> {
@@ -107,8 +110,10 @@ export async function parseDocument(fileUrl: string, fileName: string): Promise<
     }
 
     if (ext === 'pdf') {
-      result.rawText = await extractPdfText(fileUrl);
-      // Try to parse OSV/Карточка счета from PDF text
+      const pdf = await extractPdfText(fileUrl);
+      result.rawText = pdf.text;
+      result.ocrUsed = pdf.ocrUsed;
+      // Try to parse OSV/Карточка счета from PDF text (включая OCR-текст сканов)
       const osvTransactions = parseOSVFromPDF(result.rawText);
       if (osvTransactions.length > 0) {
         result.transactions = osvTransactions;
@@ -177,10 +182,10 @@ export async function parseDocument(fileUrl: string, fileName: string): Promise<
   }
 }
 
-async function extractPdfText(dataUrl: string): Promise<string> {
+async function extractPdfText(dataUrl: string): Promise<{ text: string; ocrUsed: boolean }> {
   try {
     let buffer: Uint8Array | ArrayBuffer;
-    
+
     if (typeof window !== 'undefined' && dataUrl.startsWith('data:')) {
       const base64str = dataUrl.split(',')[1] || '';
       const byteChars = atob(base64str);
@@ -195,28 +200,50 @@ async function extractPdfText(dataUrl: string): Promise<string> {
         const response = await fetch(dataUrl);
         buffer = await response.arrayBuffer();
       } catch {
-        return "Error reading PDF";
+        return { text: "Error reading PDF", ocrUsed: false };
       }
     }
 
     const pdfjsLib = await getPdfjs();
     const doc = await pdfjsLib.getDocument({ data: buffer }).promise;
-    let fullText = "";
-    
+
+    // Фаза 3.2: собираем текст послойно — страницы без текстового слоя
+    // помечаем как сканы, чтобы потом прогнать их через OCR
+    const pageTexts: string[] = [];
+    const scanPages: number[] = [];
     for (let i = 1; i <= Math.min(doc.numPages, 50); i++) {
       try {
         const page = await doc.getPage(i);
         const content = await page.getTextContent();
         const strings = content.items.map((item: any) => item.str).filter(s => s && s.trim());
-        fullText += strings.join(" ") + "\n";
+        const pageText = strings.join(" ");
+        if (looksLikeScan(pageText)) scanPages.push(i);
+        pageTexts.push(pageText);
       } catch {
-        continue;
+        pageTexts.push("");
       }
     }
-    return fullText.substring(0, 150000);
+
+    let ocrUsed = false;
+    if (scanPages.length > 0) {
+      if (canOcr()) {
+        try {
+          console.log(`[OCR] ${scanPages.length} стр. без текстового слоя → OCR (рус)`);
+          const ocrTexts = await ocrPdfScanPages(doc, scanPages, m => console.log(`[OCR] ${m}`));
+          ocrUsed = ocrTexts.size > 0;
+          for (const [n, text] of ocrTexts) pageTexts[n - 1] = text;
+        } catch (e: any) {
+          console.error('[OCR] Ошибка распознавания скана:', e?.message || e);
+        }
+      } else {
+        console.warn('[parseDocument] Скан-PDF: OCR недоступен в этом окружении (нет DOM)');
+      }
+    }
+
+    return { text: pageTexts.join("\n").substring(0, 150000), ocrUsed };
   } catch(e: any) {
     console.error('PDF extract error:', e?.message || e);
-    return "Error reading PDF (binary format not supported in this environment)";
+    return { text: "Error reading PDF (binary format not supported in this environment)", ocrUsed: false };
   }
 }
 
