@@ -1,11 +1,19 @@
-import * as XLSX from "xlsx";
-import * as pdfjsLib from "pdfjs-dist";
-import * as mammoth from "mammoth";
 import pdfWorker from "../pdf.worker.min.js?url";
 
-// Setup PDF worker using local file (works in Electron)
-if (pdfjsLib.GlobalWorkerOptions) {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
+// Тяжёлые библиотеки (xlsx ~450КБ, pdfjs-dist, mammoth) грузим лениво —
+// они вынесены из основного чанка и загружаются при первом парсинге документа.
+let pdfjsPromise: Promise<typeof import("pdfjs-dist")> | null = null;
+function getPdfjs() {
+  if (!pdfjsPromise) {
+    pdfjsPromise = import("pdfjs-dist").then((pdfjsLib) => {
+      // Setup PDF worker using local file (works in Electron)
+      if (pdfjsLib.GlobalWorkerOptions) {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
+      }
+      return pdfjsLib;
+    });
+  }
+  return pdfjsPromise;
 }
 
 export interface ParsedTransaction {
@@ -180,6 +188,7 @@ async function extractPdfText(dataUrl: string): Promise<string> {
       }
     }
 
+    const pdfjsLib = await getPdfjs();
     const doc = await pdfjsLib.getDocument({ data: buffer }).promise;
     let fullText = "";
     
@@ -201,6 +210,7 @@ async function extractPdfText(dataUrl: string): Promise<string> {
 }
 
 async function extractExcelData(dataUrl: string, ext?: string): Promise<{text: string, transactions: ParsedTransaction[], excelMetrics: Record<string, number>}> {
+    const XLSX = await import("xlsx");
     const base64str = dataUrl.split(',')[1] || dataUrl;
     
     // Для старых бинарных xls используем библиотеку xls как fallback
@@ -431,6 +441,7 @@ function base64ToBuffer(base64str: string): Buffer | Uint8Array {
 async function extractDocxText(dataUrl: string): Promise<string> {
   try {
     const buffer = base64ToBuffer(dataUrl.split(',')[1] || '');
+    const mammoth = await import("mammoth");
     const result = await mammoth.extractRawText({ arrayBuffer: buffer as any });
     return result.value.substring(0, 150000);
   } catch (e: any) {
@@ -446,6 +457,7 @@ async function extractDocText(dataUrl: string): Promise<string> {
     const buffer = base64ToBuffer(dataUrl.split(',')[1] || '');
     // Try mammoth first (it can sometimes read .doc)
     try {
+      const mammoth = await import("mammoth");
       const result = await mammoth.extractRawText({ arrayBuffer: buffer as any });
       if (result && result.value && result.value.trim().length > 10) {
         return result.value.substring(0, 150000);

@@ -41,6 +41,12 @@
 ### Removed (2026-08-26, Фаза 2.3 — мёртвый код)
 - `electron/main.js` — устаревшая копия `electron/main.cjs` (package.json `main` указывает на main.cjs, ссылок на main.js нет). Остальные кандидаты на удаление (sellerCalculators.ts, marketplaceAnalytics.ts, PresentationViewer.tsx) — решение за пользователем.
 
+### Added (2026-08-27, Фаза 2.6 — code-splitting)
+- **Главный чанк уменьшен с 2 582 КБ до 570 КБ (−78%)** — приложение стартует быстрее, тяжёлые зависимости грузятся по требованию:
+  - [bankParsers.ts](src/lib/parsers/bankParsers.ts): `xlsx`, `pdfjs-dist`, `mammoth` переведены со статических импортов на динамический `import()` — грузятся при первом парсинге документа соответствующего типа; настройка pdfjs worker перенесена в момент ленивой загрузки модуля;
+  - [Dashboard.tsx](src/pages/Dashboard.tsx): `RichAnalyticsReport` (recharts, ~505 КБ) через `React.lazy` + `Suspense` — грузится только при первом открытии вкладки «Аналитика»;
+  - итоговые чанки: index 570 КБ (gzip 165 КБ) · RichAnalyticsReport 505 КБ · xlsx 430 КБ · export 622 КБ · pdf 329 КБ · jszip 97 КБ — все ленивые, кроме index.
+
 ### Added (2026-08-27, Фаза 0.3 — git + безопасность данных)
 - **Git-репозиторий** (ветка `main`): первый коммит с чистым базовым состоянием (83 файла; `.git` 1.5MB). Лок-идентификация — noreply GitHub-аккаунт. Публикация в **private**-репозиторий — Фаза 6.
 - **`.gitignore`** (пересобран): артефакты сборки `out/`, `release/`, `dist/`; `build/*` с исключением `!build/icon.ico` (сборка electron-builder не ломается); **реальные клиентские данные вне версии**: `ref_data/`, `src/components/ref_data_extracted/`, `test-data/client-requests/`, `test-data/office-files/`, `*.rar`, сгенерированные тест-отчёты (`test-*-report*.html` — содержали имена клиентов, номера счетов и текст договоров); office-lock-файлы `~$*`.

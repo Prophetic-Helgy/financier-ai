@@ -119,7 +119,7 @@ Period       { id, orgId, name, closedAt }                     // под Фаз�
 - `npm run electron:build:installer` → NSIS Setup (oneClick=false, выбор папки, ярлыки на рабочий стол и меню пуск).
 - `npm run electron:build:portable` → portable .exe.
 - В `release/` уже лежат сборки от 24.04.2026 (Setup + portable, по ~107 МБ).
-- Node 24 / npm 11 — OK. Vite-сборка: ~8 с, бандл 2.45 МБ (666 КБ gzip) — один чанк, без code-splitting (warning Vite).
+- Node 24 / npm 11 — OK. Vite-сборка: ~11 с. Code-splitting готов (2026-08-27): главный чанк 570 КБ (gzip 165 КБ) + ленивые RichAnalyticsReport/recharts 505 КБ, xlsx 430 КБ, export 622 КБ, pdf 329 КБ, jszip 97 КБ; pdf.worker 1.09 МБ — отдельный ассет (грузится в worker-потоке).
 - ⚠️ `.gitignore` игнорирует `build/`, а в `build/icon.ico` лежит иконка, **необходимая для сборки** (package.json `win.icon`, `extraResources`). В чистом клона иконки не будет → сборка сломается.
 
 ---
@@ -267,7 +267,7 @@ Period       { id, orgId, name, closedAt }                     // под Фаз�
 
 ### 6.3 Технические (средние/низкие)
 
-- Один JS-чанк 2.4 МБ — нужен code-splitting (pdf.worker уже отдельным; тяжёлые парсеры — lazy).
+- ~~Один JS-чанк 2.4 МБ — нужен code-splitting~~ ✅ готово 2026-08-27 (главный чанк 570 КБ; парсеры/recharts/export — ленивые).
 - `Math.random().toString()` как id транзакций/записей (коллизии).
 - `escape()`/`decodeURIComponent(escape())` — deprecated.
 - console.log повсюду в проде (отладочные).

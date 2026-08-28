@@ -5,7 +5,6 @@ import { parseDocument, ParsedDocument } from "../lib/parsers/bankParsers";
 import { generateHeuristicPresentation, runLocalLLMPresentation } from "../lib/analyticsEngine";
 import { cn } from "../lib/utils";
 import { PresentationView } from "../components/PresentationView";
-import { RichAnalyticsReport } from "../components/RichAnalyticsReport";
 import { ReportAvailability } from "../components/ReportAvailability";
 import { ExportReports } from "../components/ExportReports";
 import { getDefaultConfig, saveConfig, detectLocalLLM, LLMConfig } from "../lib/llmIntegration";
@@ -15,6 +14,11 @@ import { LedgerView } from "../components/LedgerView";
 import { loadStore, saveStore, importDocumentToStore } from "../lib/store/store";
 import { createId } from "../lib/store/schema";
 import type { LedgerStore } from "../lib/store/schema";
+
+// recharts (~400КБ) грузится лениво — только при открытии вкладки «Аналитика»
+const RichAnalyticsReport = React.lazy(() =>
+  import("../components/RichAnalyticsReport").then((m) => ({ default: m.RichAnalyticsReport }))
+);
 
 function downloadBlob(_format: string, blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
@@ -602,7 +606,9 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
                 {/* Analytics View */}
                 {activeTab === 'analytics' && combinedDocument && (
                   <div className="h-full overflow-y-auto p-6">
-                    <RichAnalyticsReport document={combinedDocument} themeColor={config.color} />
+                    <React.Suspense fallback={<div className="flex justify-center p-10 text-[var(--text-muted)]"><Loader2 className="animate-spin" /></div>}>
+                      <RichAnalyticsReport document={combinedDocument} themeColor={config.color} />
+                    </React.Suspense>
                   </div>
                 )}
 
