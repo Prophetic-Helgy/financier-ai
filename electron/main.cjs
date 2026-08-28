@@ -319,6 +319,22 @@ ipcMain.handle('read-files', async (_event, filePaths) => {
 });
 
 // ============================================================
+// IPC: распаковка RAR (Фаза 3.1) — рендерер sandbox:true,
+// поэтому node-unrar-js работает в main-процессе
+// ============================================================
+const { extractRarBase64 } = require('./rarExtract.cjs');
+
+ipcMain.handle('archive:unrar', (_event, base64) => {
+  try {
+    if (typeof base64 !== 'string' || !base64) return { error: 'не переданы данные RAR-архива' };
+    return extractRarBase64(base64);
+  } catch (err) {
+    console.error('[main] archive:unrar failed:', err.message);
+    return { error: err.message };
+  }
+});
+
+// ============================================================
 // IPC handlers for ledger store (Фаза 1)
 // JSON-файл в userData, атомарная запись (tmp+rename),
 // автоматические бэкапы (.bak.1 = самый свежий, до 5 поколений)

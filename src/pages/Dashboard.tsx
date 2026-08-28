@@ -2,6 +2,7 @@ import React, { useState, useMemo, useCallback, useRef, useEffect } from "react"
 import { ArrowLeft, ArrowUpRight, ArrowDownRight, FileText, BrainCircuit, Calculator, Settings2, Loader2, FileSpreadsheet, Presentation, Wallet, Plus, Trash2, Search, DownloadCloud, X, RotateCcw, SlidersHorizontal, Hash, Type, Landmark, Store } from "lucide-react";
 import { FileUploader, FileData } from "../components/FileUploader";
 import { parseDocument, ParsedDocument } from "../lib/parsers/bankParsers";
+import { expandArchives } from "../lib/parsers/archives";
 import { generateHeuristicPresentation, runLocalLLMPresentation } from "../lib/analyticsEngine";
 import { cn } from "../lib/utils";
 import { PresentationView } from "../components/PresentationView";
@@ -266,7 +267,9 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
       const isDataUrl = typeof f.content === 'string' && f.content.startsWith('data:');
       console.log(`[handleFilesLoaded] name=${f.name}, contentLength=${len}, isDataUrl=${isDataUrl}, preview=${preview}`);
     }
-    const parsedPromises = files.map(f => parseDocument(f.content, f.name));
+    // Фаза 3.1: архивы (ZIP/RAR) распаковываем во вложенные файлы
+    const expanded = await expandArchives(files);
+    const parsedPromises = expanded.map(f => parseDocument(f.content, f.name));
     const newDocs = await Promise.all(parsedPromises);
     for (const d of newDocs) {
       console.log(`[handleFilesLoaded] parsed: ${d.fileName}, rawTextLength=${d.rawText.length}, transactions=${d.transactions.length}`);

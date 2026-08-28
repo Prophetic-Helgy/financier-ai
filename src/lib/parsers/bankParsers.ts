@@ -1,11 +1,15 @@
-import pdfWorker from "../pdf.worker.min.js?url";
+import { parseBankStatement } from "./bankProfiles";
 
 // Тяжёлые библиотеки (xlsx ~450КБ, pdfjs-dist, mammoth) грузим лениво —
 // они вынесены из основного чанка и загружаются при первом парсинге документа.
 let pdfjsPromise: Promise<typeof import("pdfjs-dist")> | null = null;
 function getPdfjs() {
   if (!pdfjsPromise) {
-    pdfjsPromise = import("pdfjs-dist").then((pdfjsLib) => {
+    // ?url-импорт внутри: вне Vite (tsx-тесты) модуль не трогаем без PDF
+    pdfjsPromise = Promise.all([
+      import("pdfjs-dist"),
+      import("../pdf.worker.min.js?url").then((m) => m.default),
+    ]).then(([pdfjsLib, pdfWorker]) => {
       // Setup PDF worker using local file (works in Electron)
       if (pdfjsLib.GlobalWorkerOptions) {
         pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
@@ -110,7 +114,7 @@ export async function parseDocument(fileUrl: string, fileName: string): Promise<
         result.transactions = osvTransactions;
       }
     } else if (ext === 'xls' || ext === 'xlsx') {
-      const { text, transactions, excelMetrics } = await extractExcelData(fileUrl, ext);
+      const { text, transactions, excelMetrics } = await extractExcelData(fileUrl, ext, fileName);
       result.rawText = text;
       result.transactions = transactions;
       if (excelMetrics) {
@@ -130,8 +134,15 @@ export async function parseDocument(fileUrl: string, fileName: string): Promise<
          try { text = decodeURIComponent(escape(text)); } catch(e){}
       }
       result.rawText = text.substring(0, 150000);
-      if (ext === 'txt' || ext === 'csv') {
-         result.transactions = parse1CClientBank(result.rawText);
+      if (ext === 'txt' || ext === 'csv' || ext === 'tsv') {
+        // Фаза 3.1: выписки банков РФ (Сбер, Т-Банк, Альфа, ВТБ) — по строке
+        // заголовков; если похожих транзакций мало, пробуем формат 1С-экспорта.
+        const bs = parseBankStatement(text, fileName);
+        if (bs.transactions.length >= 3) {
+          result.transactions = bs.transactions;
+        } else if (ext === 'txt' || ext === 'csv') {
+          result.transactions = parse1CClientBank(result.rawText);
+        }
       }
     }
 
@@ -209,7 +220,7 @@ async function extractPdfText(dataUrl: string): Promise<string> {
   }
 }
 
-async function extractExcelData(dataUrl: string, ext?: string): Promise<{text: string, transactions: ParsedTransaction[], excelMetrics: Record<string, number>}> {
+async function extractExcelData(dataUrl: string, ext?: string, fileName?: string): Promise<{text: string, transactions: ParsedTransaction[], excelMetrics: Record<string, number>}> {
     const XLSX = await import("xlsx");
     const base64str = dataUrl.split(',')[1] || dataUrl;
     
@@ -232,13 +243,21 @@ async function extractExcelData(dataUrl: string, ext?: string): Promise<{text: s
     let fullText = "";
     const transactions: ParsedTransaction[] = [];
     const excelMetrics: Record<string, number> = {};
+    let bankTx: ParsedTransaction[] | null = null;
 
     for (const sheetName of workbook.SheetNames) {
         const worksheet = workbook.Sheets[sheetName];
         fullText += `\n--- Вкладка: ${sheetName} ---\n`;
         const csv = XLSX.utils.sheet_to_csv(worksheet);
         fullText += csv;
-        
+
+        // Фаза 3.1: выписка банка со строкой заголовков — приоритет над
+        // универсальной эвристикой «дата + сумма»
+        if (!bankTx) {
+          const bs = parseBankStatement(csv, fileName);
+          if (bs.transactions.length >= 3) bankTx = bs.transactions;
+        }
+
         const rawJson = XLSX.utils.sheet_to_json<any>(worksheet, { header: 1 });
         for (const row of rawJson) {
             if (!Array.isArray(row) || row.length === 0) continue;
@@ -311,7 +330,7 @@ async function extractExcelData(dataUrl: string, ext?: string): Promise<{text: s
         }
     }
 
-    return { text: fullText.substring(0, 150000), transactions, excelMetrics };
+    return { text: fullText.substring(0, 150000), transactions: bankTx ?? transactions, excelMetrics };
 }
 
 // Parser for OSV (Оборотно-сальдовая ведомость) and Карточка счета from PDF text

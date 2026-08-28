@@ -61,6 +61,8 @@ interface ElectronAPI {
   isMaximized: () => Promise<boolean>;
   openFileDialog: () => Promise<OpenFileDialogResult>;
   readFiles: (filePaths: string[]) => Promise<ReadFileResult[]>;
+  // RAR-архив (Фаза 3.1): base64 → содержимое (main-процесс, node-unrar-js)
+  unrar?: (base64: string) => Promise<ReadFileResult[] | { error?: string }>;
   onFilesDropped: (callback: (files: ReadFileResult[]) => void) => (() => void);
   onFilesDroppedError: (callback: (errorMsg: string) => void) => void;
   store?: {
