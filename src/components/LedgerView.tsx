@@ -1,6 +1,7 @@
-import React, { useMemo } from 'react';
-import { Landmark, FileDown, FileUp, RotateCcw } from 'lucide-react';
-import { LedgerStore } from '../lib/store/schema';
+import React, { useMemo, useState } from 'react';
+import { Landmark, FileDown, FileUp, RotateCcw, Target, Trash2 } from 'lucide-react';
+import { LedgerStore, BudgetGoal, createId } from '../lib/store/schema';
+import { budgetSummary, monthForecast, currentYM, daysInMonth } from '../lib/store/budgets';
 import { cn } from '../lib/utils';
 
 interface LedgerViewProps {
@@ -9,6 +10,7 @@ interface LedgerViewProps {
   onExportBackup: () => void;
   onRestoreFile: () => void;
   onRestoreLatestBackup: () => void;
+  onBudgetsChange: (budgets: BudgetGoal[]) => void;
 }
 
 const MONTHS_RU = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'];
@@ -39,7 +41,7 @@ function StatCard({ label, value, tone }: { label: string; value: string; tone?:
  * Вкладка «Учёт»: что сохранено в хранилище (переживает перезапуск),
  * итоги, разбивка по месяцам, журнал операций, бэкапы.
  */
-export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onRestoreLatestBackup }: LedgerViewProps) {
+export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onRestoreLatestBackup, onBudgetsChange }: LedgerViewProps) {
   const stats = useMemo(() => {
     let income = 0, expense = 0;
     for (const t of store.transactions) {
@@ -71,6 +73,49 @@ export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onResto
 
   const backupBtn = "flex items-center gap-1.5 px-3 py-1.5 bg-[var(--surface-inner)] border border-[var(--border)] rounded-md text-[11px] text-[var(--text-muted)] hover:text-[var(--fg)] transition-colors disabled:opacity-50";
 
+  // Фаза 3.4: бюджеты и план-факт
+  const curYM = currentYM();
+  const [budgetYM, setBudgetYM] = useState(curYM);
+  const [bCat, setBCat] = useState('');
+  const [bLimit, setBLimit] = useState('');
+  const [whatIf, setWhatIf] = useState(0);
+
+  const ymOptions = useMemo(() => {
+    const set = new Set<string>([curYM]);
+    for (const t of store.transactions) {
+      const ym = (t.date || '').slice(0, 7);
+      if (/^\d{4}-\d{2}$/.test(ym)) set.add(ym);
+    }
+    return [...set].sort((a, b) => b.localeCompare(a));
+  }, [store.transactions, curYM]);
+
+  const summary = useMemo(() => budgetSummary(store, budgetYM), [store, budgetYM]);
+
+  const isCurrentYM = budgetYM === curYM;
+  const asOfDay = isCurrentYM ? new Date().getDate() : budgetYM < curYM ? daysInMonth(budgetYM) : 0;
+  const forecast = useMemo(() => monthForecast(store.transactions, budgetYM, asOfDay), [store.transactions, budgetYM, asOfDay]);
+
+  const orgId = store.organizations[0]?.id || '';
+  const addBudget = () => {
+    const category = bCat.trim();
+    const limit = Number(bLimit.replace(',', '.'));
+    if (!category || !Number.isFinite(limit) || limit < 0) return;
+    onBudgetsChange([
+      ...store.budgets.filter(b => b.category.toLowerCase() !== category.toLowerCase()),
+      { id: createId(), orgId, category, monthlyLimit: limit, currency: 'RUB' },
+    ]);
+    setBCat('');
+    setBLimit('');
+  };
+  const removeBudget = (category: string) => {
+    onBudgetsChange(store.budgets.filter(b => b.category.toLowerCase() !== category.toLowerCase()));
+  };
+  // Сколько можно тратить в день, чтобы уложиться в суммарный бюджет
+  const dailyAllowance = isCurrentYM && summary.totalLimit > 0
+    ? (summary.totalLimit - forecast.spent) / Math.max(1, forecast.daysInMonth - forecast.daysElapsed + 1)
+    : null;
+  const whatIfProjected = forecast.projectedTotal * (1 + whatIf / 100);
+
   return (
     <div className="h-full overflow-y-auto p-6">
       <div className="max-w-5xl mx-auto">
@@ -101,6 +146,151 @@ export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onResto
           <StatCard label="Доходы" value={'+' + fmt(stats.income) + ' ₽'} tone="emerald" />
           <StatCard label="Расходы" value={'-' + fmt(stats.expense) + ' ₽'} tone="rose" />
           <StatCard label="Баланс" value={fmt(stats.balance) + ' ₽'} tone={stats.balance >= 0 ? 'emerald' : 'rose'} />
+        </div>
+
+        {/* Бюджеты: план-факт + прогноз (Фаза 3.4) */}
+        <div className="mb-6 bg-[var(--surface)] border border-[var(--border)] rounded-xl overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-[var(--border)] bg-[var(--surface-inner)]/50 flex items-center justify-between gap-3 flex-wrap">
+            <h3 className="font-semibold text-sm text-[var(--fg)] flex items-center gap-1.5">
+              <Target className="w-3.5 h-3.5 text-[var(--text-muted)]" /> Бюджеты: план-факт
+            </h3>
+            <select
+              value={budgetYM}
+              onChange={e => setBudgetYM(e.target.value)}
+              className="bg-[var(--surface-inner)] border border-[var(--border)] rounded-md text-xs text-[var(--fg)] px-2 py-1"
+            >
+              {ymOptions.map(ym => (
+                <option key={ym} value={ym}>{monthLabel(ym)}</option>
+              ))}
+            </select>
+          </div>
+          <div className="p-4 space-y-4">
+            {forecast.spent > 0 ? (
+              <>
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+                  <StatCard label={isCurrentYM ? 'Расходовано' : 'Расходы за месяц'} value={fmt(forecast.spent) + ' ₽'} />
+                  <StatCard label="Темп в день" value={fmt(forecast.pacePerDay) + ' ₽'} />
+                  <StatCard
+                    label={budgetYM > curYM ? 'Прогноз' : 'К концу месяца'}
+                    value={fmt(isCurrentYM || budgetYM > curYM ? forecast.projectedTotal : forecast.spent) + ' ₽'}
+                  />
+                  {dailyAllowance !== null ? (
+                    <StatCard
+                      label={dailyAllowance >= 0 ? 'Допуск в день в бюджете' : 'Перерасход в день'}
+                      value={(dailyAllowance >= 0 ? '≤ ' : '') + fmt(Math.abs(dailyAllowance)) + ' ₽'}
+                      tone={dailyAllowance >= 0 ? 'emerald' : 'rose'}
+                    />
+                  ) : (
+                    <StatCard label="Бюджет на месяц" value={summary.totalLimit > 0 ? fmt(summary.totalLimit) + ' ₽' : '—'} />
+                  )}
+                </div>
+                {isCurrentYM && (
+                  <div className="bg-[var(--surface-inner)] rounded-lg p-3">
+                    <div className="flex items-center justify-between text-xs text-[var(--text-muted)] mb-1.5 gap-2 flex-wrap">
+                      <span>Что-если: темп расходов {whatIf >= 0 ? '+' : ''}{whatIf}%</span>
+                      <span className="font-mono text-[var(--fg)]">→ к концу месяца ≈ {fmt(whatIfProjected)} ₽</span>
+                    </div>
+                    <input
+                      type="range" min={-50} max={100} step={5} value={whatIf}
+                      onChange={e => setWhatIf(Number(e.target.value))}
+                      className="w-full accent-emerald-500"
+                    />
+                  </div>
+                )}
+              </>
+            ) : (
+              <p className="text-xs text-[var(--text-muted)]">
+                В месяце {monthLabel(budgetYM)} пока нет расходов — прогноз появится после импорта операций.
+              </p>
+            )}
+
+            {summary.lines.length === 0 ? (
+              <p className="text-xs text-[var(--text-muted)]">
+                Бюджеты не заданы — добавьте месячный лимит по категории ниже.
+              </p>
+            ) : (
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="text-[10px] uppercase tracking-wider text-[var(--text-muted)]">
+                    <th className="py-1.5 font-medium">Категория</th>
+                    <th className="py-1.5 font-medium text-right">Бюджет</th>
+                    <th className="py-1.5 font-medium text-right">Факт</th>
+                    <th className="py-1.5 font-medium text-right">Осталось</th>
+                    <th className="py-1.5 font-medium pl-3 w-40">Прогресс</th>
+                    <th className="w-8" />
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--border)]">
+                  {summary.lines.map(l => (
+                    <tr key={l.category} className="hover:bg-[var(--surface-inner)]/50 transition-colors">
+                      <td className="py-2 text-sm text-[var(--fg)]">{l.category}</td>
+                      <td className="py-2 text-xs font-mono text-right text-[var(--text-muted)]">{fmt(l.limit)}</td>
+                      <td className="py-2 text-xs font-mono text-right text-[var(--fg)]">{fmt(l.actual)}</td>
+                      <td className={cn(
+                        "py-2 text-xs font-mono text-right",
+                        l.remaining >= 0 ? 'text-emerald-500' : 'text-rose-500'
+                      )}>{fmt(l.remaining)}</td>
+                      <td className="py-2 pl-3">
+                        <div className="flex items-center gap-2">
+                          <div className="h-1.5 flex-1 rounded bg-[var(--surface)] overflow-hidden">
+                            <div
+                              className={cn(
+                                "h-full rounded",
+                                l.pct < 0.8 ? 'bg-emerald-500' : l.pct < 1 ? 'bg-amber-500' : 'bg-rose-500'
+                              )}
+                              style={{ width: `${Math.min(100, l.pct * 100)}%` }}
+                            />
+                          </div>
+                          <span className="text-[10px] font-mono text-[var(--text-muted)] w-9 text-right">{Math.round(l.pct * 100)}%</span>
+                        </div>
+                      </td>
+                      <td className="py-1 text-right">
+                        <button
+                          onClick={() => removeBudget(l.category)}
+                          title="Удалить бюджет"
+                          className="p-1 text-[var(--text-muted)] hover:text-rose-500 transition-colors"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+
+            <div className="flex items-center gap-2 flex-wrap pt-1">
+              <input
+                list="budget-categories"
+                value={bCat}
+                onChange={e => setBCat(e.target.value)}
+                placeholder="Категория (например: Еда)"
+                className="bg-[var(--surface-inner)] border border-[var(--border)] rounded-md text-xs text-[var(--fg)] px-2.5 py-1.5 w-48"
+              />
+              <datalist id="budget-categories">
+                {store.categories.filter(c => c.kind === 'expense').map(c => (
+                  <option key={c.id} value={c.name} />
+                ))}
+              </datalist>
+              <input
+                value={bLimit}
+                onChange={e => setBLimit(e.target.value)}
+                placeholder="Лимит в месяц, ₽"
+                inputMode="decimal"
+                className="bg-[var(--surface-inner)] border border-[var(--border)] rounded-md text-xs text-[var(--fg)] px-2.5 py-1.5 w-36"
+              />
+              <button
+                onClick={addBudget}
+                disabled={!bCat.trim() || bLimit.trim() === ''}
+                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 rounded-md text-xs font-medium text-white transition-colors"
+              >
+                Добавить бюджет
+              </button>
+              {summary.unbudgeted > 0 && (
+                <span className="text-[11px] text-[var(--text-muted)]">без бюджета: {fmt(summary.unbudgeted)} ₽</span>
+              )}
+            </div>
+          </div>
         </div>
 
         {store.transactions.length === 0 ? (

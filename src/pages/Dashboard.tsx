@@ -15,7 +15,7 @@ import { LedgerView } from "../components/LedgerView";
 import { SellerView } from "../components/SellerView";
 import { loadStore, saveStore, importDocumentToStore } from "../lib/store/store";
 import { createId } from "../lib/store/schema";
-import type { LedgerStore } from "../lib/store/schema";
+import type { LedgerStore, BudgetGoal } from "../lib/store/schema";
 
 // recharts (~400КБ) грузится лениво — только при открытии вкладки «Аналитика»
 const RichAnalyticsReport = React.lazy(() =>
@@ -97,6 +97,20 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
       setLedger(saved);
     } catch (e) {
       console.error('[ledger] Ошибка сохранения ручных записей:', e);
+    }
+  }, []);
+
+  // Сохранить бюджеты (Фаза 3.4) — тот же паттерн, что и ручные записи
+  const persistBudgets = useCallback(async (budgets: BudgetGoal[]) => {
+    try {
+      const base = ledgerRef.current || (await loadStore());
+      const next = structuredClone(base);
+      next.budgets = budgets;
+      const saved = await saveStore(next);
+      ledgerRef.current = saved;
+      setLedger(saved);
+    } catch (e) {
+      console.error('[ledger] Ошибка сохранения бюджетов:', e);
     }
   }, []);
 
@@ -768,6 +782,7 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
                     onExportBackup={handleLedgerExportBackup}
                     onRestoreFile={handleLedgerRestoreFile}
                     onRestoreLatestBackup={handleLedgerRestoreLatestBackup}
+                    onBudgetsChange={(b) => void persistBudgets(b)}
                   />
                 ) : (
                   <div className="h-full flex items-center justify-center text-[var(--text-muted)] text-sm">
