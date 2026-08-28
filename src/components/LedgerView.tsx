@@ -1,11 +1,12 @@
 import React, { useMemo, useState } from 'react';
-import { Landmark, FileDown, FileUp, RotateCcw, Target, Trash2, Coins, Wallet } from 'lucide-react';
-import { LedgerStore, BudgetGoal, Account, FxRate, createId } from '../lib/store/schema';
+import { Landmark, FileDown, FileUp, RotateCcw, Target, Trash2, Coins, Wallet, CalendarClock } from 'lucide-react';
+import { LedgerStore, BudgetGoal, Account, FxRate, Period, Transaction, createId } from '../lib/store/schema';
 import { budgetSummary, monthForecast, currentYM, daysInMonth } from '../lib/store/budgets';
 import {
   totalsInBase, currencyBreakdown, monthFxGainLoss, toBase,
-  mergeExternalRates, BASE_CURRENCY, CbrRate,
+  mergeExternalRates, lastDayOfMonth, BASE_CURRENCY, CbrRate,
 } from '../lib/store/fx';
+import { ymOf, nextPeriods, periodRows, makeCorrection, mtdYtd } from '../lib/store/periods';
 import { cn } from '../lib/utils';
 
 interface LedgerViewProps {
@@ -17,6 +18,8 @@ interface LedgerViewProps {
   onBudgetsChange: (budgets: BudgetGoal[]) => void;
   onAccountsChange: (accounts: Account[]) => void;
   onFxRatesChange: (rates: FxRate[]) => void;
+  onPeriodsChange: (periods: Period[]) => void;
+  onTransactionsChange: (transactions: Transaction[]) => void;
 }
 
 const COMMON_CURRENCIES = ['USD', 'EUR', 'GBP', 'CNY', 'KZT', 'BYN', 'AMD', 'AZN', 'UZS', 'PLN', 'TRY'];
@@ -56,11 +59,21 @@ function StatCard({ label, value, tone, sub }: { label: string; value: string; t
   );
 }
 
+function DeltaChip({ value }: { value: number | null }) {
+  if (value === null) return <span className="text-[10px] font-mono text-[var(--text-muted)]">сравнение н/д</span>;
+  return (
+    <span className={cn(
+      "text-[10px] font-mono px-1.5 py-0.5 rounded",
+      value >= 0 ? 'bg-emerald-500/15 text-emerald-500' : 'bg-rose-500/15 text-rose-500'
+    )}>{value >= 0 ? '+' : ''}{Math.round(value)}%</span>
+  );
+}
+
 /**
  * Вкладка «Учёт»: что сохранено в хранилище (переживает перезапуск),
  * итоги, разбивка по месяцам, журнал операций, бэкапы.
  */
-export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onRestoreLatestBackup, onBudgetsChange, onAccountsChange, onFxRatesChange }: LedgerViewProps) {
+export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onRestoreLatestBackup, onBudgetsChange, onAccountsChange, onFxRatesChange, onPeriodsChange, onTransactionsChange }: LedgerViewProps) {
   // Фаза 3.3: итоги — в базовой валюте (RUB), валютные операции по курсу на дату
   const stats = useMemo(() => {
     const base = totalsInBase(store.transactions, store.fxRates);
@@ -104,6 +117,8 @@ export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onResto
   }, [store.transactions, store.fxRates]);
 
   const backupBtn = "flex items-center gap-1.5 px-3 py-1.5 bg-[var(--surface-inner)] border border-[var(--border)] rounded-md text-[11px] text-[var(--text-muted)] hover:text-[var(--fg)] transition-colors disabled:opacity-50";
+  const rowBtn = "px-2 py-1 bg-[var(--surface-inner)] border border-[var(--border)] rounded-md text-[11px] text-[var(--text-muted)] hover:text-[var(--fg)] transition-colors";
+  const fieldCls = "bg-[var(--surface-inner)] border border-[var(--border)] rounded-md text-xs text-[var(--fg)] px-2 py-1.5";
 
   // Фаза 3.4: бюджеты и план-факт
   const curYM = currentYM();
@@ -228,6 +243,53 @@ export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onResto
     () => [...store.fxRates].sort((a, b) => (b.date + b.code).localeCompare(a.date + a.code)).slice(0, 50),
     [store.fxRates]
   );
+
+  // Фаза 3.5: периоды — закрытие/открытие, корректирующие записи, MTD/YTD
+  const today = new Date().toISOString().slice(0, 10);
+  const periodTable = useMemo(() => periodRows(store), [store]);
+  const mtdYtdData = useMemo(() => mtdYtd(store.transactions, store.fxRates, today), [store.transactions, store.fxRates, today]);
+
+  const [correctionYM, setCorrectionYM] = useState<string | null>(null);
+  const [corrDate, setCorrDate] = useState('');
+  const [corrType, setCorrType] = useState<'income' | 'expense'>('expense');
+  const [corrAmount, setCorrAmount] = useState('');
+  const [corrAccountId, setCorrAccountId] = useState('');
+  const [corrCat, setCorrCat] = useState('');
+  const [corrNote, setCorrNote] = useState('');
+
+  const togglePeriod = (ym: string, closed: boolean) => {
+    onPeriodsChange(nextPeriods(store.periods, orgId, ym, closed, new Date().toISOString()));
+  };
+  const openCorrection = (ym: string) => {
+    setCorrectionYM(ym);
+    setCorrDate(ym >= curYM ? today : lastDayOfMonth(ym));
+    setCorrType('expense');
+    setCorrAmount('');
+    setCorrAccountId(store.accounts[0]?.id || '');
+    setCorrCat(store.categories.find(c => c.builtin && c.kind === 'expense')?.name || '');
+    setCorrNote('');
+  };
+  const corrAccount = store.accounts.find(a => a.id === corrAccountId) || store.accounts[0];
+  const corrCur = (corrAccount?.currency || 'RUB').toUpperCase();
+  const addCorrection = () => {
+    if (!correctionYM || !corrAccount) return;
+    const amount = Number(corrAmount.replace(',', '.'));
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(corrDate) || ymOf(corrDate) !== correctionYM
+      || !Number.isFinite(amount) || amount <= 0) return;
+    onTransactionsChange([...store.transactions, makeCorrection({
+      date: corrDate,
+      type: corrType,
+      amount,
+      currency: corrAccount.currency || BASE_CURRENCY,
+      accountId: corrAccount.id,
+      orgId,
+      category: corrCat || 'Без категории',
+      purpose: corrNote.trim(),
+    }, new Date().toISOString())]);
+    setCorrectionYM(null);
+    setCorrAmount('');
+    setCorrNote('');
+  };
 
   return (
     <div className="h-full overflow-y-auto p-6">
@@ -578,6 +640,113 @@ export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onResto
           </div>
         </div>
 
+        {/* Периоды (Фаза 3.5): закрытые месяцы только для чтения, корректирующие записи */}
+        <div className="mb-6 bg-[var(--surface)] border border-[var(--border)] rounded-xl overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-[var(--border)] bg-[var(--surface-inner)]/50">
+            <h3 className="font-semibold text-sm text-[var(--fg)] flex items-center gap-1.5">
+              <CalendarClock className="w-3.5 h-3.5 text-[var(--text-muted)]" /> Периоды
+            </h3>
+          </div>
+          <div className="p-4 space-y-3">
+            {periodTable.length === 0 ? (
+              <p className="text-xs text-[var(--text-muted)]">
+                Закрытый месяц защищён: импорт в него невозможен, цифры меняют только корректирующие записи.
+              </p>
+            ) : (
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="text-[10px] uppercase tracking-wider text-[var(--text-muted)]">
+                    <th className="py-1.5 font-medium">Месяц</th>
+                    <th className="py-1.5 font-medium">Статус</th>
+                    <th className="py-1.5 font-medium text-right">Доходы</th>
+                    <th className="py-1.5 font-medium text-right">Расходы</th>
+                    <th className="py-1.5 font-medium text-right">Итог</th>
+                    <th className="py-1.5 font-medium text-right">Операций</th>
+                    <th className="py-1.5 font-medium text-right">Действия</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--border)]">
+                  {periodTable.map(row => (
+                    <tr key={row.ym} className="hover:bg-[var(--surface-inner)]/50 transition-colors">
+                      <td className="py-2 text-sm text-[var(--fg)]">{monthLabel(row.ym)}</td>
+                      <td className="py-2">
+                        {row.closed ? (
+                          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-400" title={row.closedAt ? `Закрыт: ${row.closedAt}` : undefined}>Закрыт</span>
+                        ) : row.ym === curYM ? (
+                          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-500">Текущий</span>
+                        ) : (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--surface)] text-[var(--text-muted)]">Открыт</span>
+                        )}
+                      </td>
+                      <td className="py-2 text-xs font-mono text-right text-emerald-500">+{fmt(row.income)}</td>
+                      <td className="py-2 text-xs font-mono text-right text-rose-500">-{fmt(row.expense)}</td>
+                      <td className={cn("py-2 text-xs font-mono text-right", row.net >= 0 ? 'text-[var(--fg)]' : 'text-rose-400')}>= {fmt(row.net)}</td>
+                      <td className="py-2 text-xs font-mono text-right text-[var(--text-muted)]">
+                        {row.count}{row.corrections > 0 && ` (${row.corrections} корр.)`}
+                      </td>
+                      <td className="py-2 text-right whitespace-nowrap">
+                        {row.closed ? (
+                          <>
+                            <button onClick={() => openCorrection(row.ym)} className={rowBtn + " mr-1.5"}>Корректировка</button>
+                            <button onClick={() => togglePeriod(row.ym, false)} className={rowBtn} title="Открыть период: импорт в него снова станет возможен">Открыть снова</button>
+                          </>
+                        ) : row.ym < curYM ? (
+                          <button onClick={() => togglePeriod(row.ym, true)} className={rowBtn}>Закрыть</button>
+                        ) : (
+                          <span className="text-[10px] text-[var(--text-muted)]">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            {correctionYM && (
+              <div className="bg-[var(--surface-inner)] rounded-lg p-3 space-y-2">
+                <div className="text-xs font-medium text-[var(--fg)]">Корректирующая запись в {monthLabel(correctionYM)}</div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <input type="date" value={corrDate} onChange={e => setCorrDate(e.target.value)} className={fieldCls} />
+                  <select
+                    value={corrType}
+                    onChange={e => {
+                      const t = e.target.value as 'income' | 'expense';
+                      setCorrType(t);
+                      setCorrCat(store.categories.find(c => c.builtin && c.kind === t)?.name || '');
+                    }}
+                    className={fieldCls}
+                  >
+                    <option value="expense">Расход</option>
+                    <option value="income">Доход</option>
+                  </select>
+                  <input value={corrAmount} onChange={e => setCorrAmount(e.target.value)} placeholder={`Сумма, ${corrCur}`} inputMode="decimal" className={fieldCls} />
+                  <select value={corrAccount?.id || ''} onChange={e => setCorrAccountId(e.target.value)} className={fieldCls}>
+                    {store.accounts.map(a => (
+                      <option key={a.id} value={a.id}>{a.name} ({(a.currency || 'RUB').toUpperCase()})</option>
+                    ))}
+                  </select>
+                  <select value={corrCat} onChange={e => setCorrCat(e.target.value)} className={fieldCls}>
+                    {store.categories.filter(c => c.kind === corrType).map(c => (
+                      <option key={c.id} value={c.name}>{c.name}</option>
+                    ))}
+                  </select>
+                  <input value={corrNote} onChange={e => setCorrNote(e.target.value)} placeholder="Почему (например: доплата по счёту)" className={fieldCls + " w-52"} />
+                  <button
+                    onClick={addCorrection}
+                    disabled={corrAmount.trim() === '' || !/^\d{4}-\d{2}-\d{2}$/.test(corrDate) || ymOf(corrDate) !== correctionYM}
+                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 rounded-md text-xs font-medium text-white transition-colors"
+                  >
+                    Добавить
+                  </button>
+                  <button onClick={() => setCorrectionYM(null)} className={rowBtn}>Отмена</button>
+                </div>
+                <p className="text-[10px] text-[var(--text-muted)]">
+                  Записывается с датой из закрытого месяца — влияет на итоги этого месяца, в журнале помечена «корр.».
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+
         {store.transactions.length === 0 ? (
           <div className="h-64 flex flex-col items-center justify-center text-center text-[var(--text-muted)]">
             <Landmark className="w-10 h-10 mb-3 opacity-20" />
@@ -589,6 +758,38 @@ export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onResto
           </div>
         ) : (
           <>
+            {/* MTD / YTD (Фаза 3.5): текущий месяц/год до сегодня vs тот же период прошлого месяца/года */}
+            <div className="mb-6 grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="bg-[var(--surface)] border border-[var(--border)] rounded-xl p-3">
+                <div className="flex items-center justify-between mb-1">
+                  <div className="text-[10px] uppercase tracking-wider text-[var(--text-muted)]">
+                    Текущий месяц (до {today.slice(8, 10)}.{today.slice(5, 7)})
+                  </div>
+                  <DeltaChip value={mtdYtdData.mtdDeltaPct} />
+                </div>
+                <div className={cn("font-mono text-lg font-medium", mtdYtdData.mtd.net >= 0 ? 'text-emerald-500' : 'text-rose-500')}>
+                  = {fmt(mtdYtdData.mtd.net)} ₽
+                </div>
+                <div className="text-[10px] text-[var(--text-muted)]" title="Доходы − расходы за те же числа (1..сегодня) предыдущего месяца">
+                  т.п. прошлого месяца: {fmt(mtdYtdData.mtdPrev.net)} ₽
+                </div>
+              </div>
+              <div className="bg-[var(--surface)] border border-[var(--border)] rounded-xl p-3">
+                <div className="flex items-center justify-between mb-1">
+                  <div className="text-[10px] uppercase tracking-wider text-[var(--text-muted)]">
+                    Год {today.slice(0, 4)} (YTD)
+                  </div>
+                  <DeltaChip value={mtdYtdData.ytdDeltaPct} />
+                </div>
+                <div className={cn("font-mono text-lg font-medium", mtdYtdData.ytd.net >= 0 ? 'text-emerald-500' : 'text-rose-500')}>
+                  = {fmt(mtdYtdData.ytd.net)} ₽
+                </div>
+                <div className="text-[10px] text-[var(--text-muted)]" title="Доходы − расходы с 1 января до сегодняшнего дня прошлого года">
+                  т.п. прошлого года: {fmt(mtdYtdData.ytdPrev.net)} ₽
+                </div>
+              </div>
+            </div>
+
             {/* By month */}
             <div className="mb-6 bg-[var(--surface)] border border-[var(--border)] rounded-xl overflow-hidden">
               <div className="px-4 py-2.5 border-b border-[var(--border)] bg-[var(--surface-inner)]/50">
@@ -637,7 +838,12 @@ export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onResto
                 <tbody className="divide-y divide-[var(--border)]">
                   {txSorted.map(tx => (
                     <tr key={tx.id} className="hover:bg-[var(--surface-inner)]/50 transition-colors">
-                      <td className="px-4 py-2 text-xs font-mono whitespace-nowrap text-[var(--fg)]">{tx.date}</td>
+                      <td className="px-4 py-2 text-xs font-mono whitespace-nowrap text-[var(--fg)]">
+                        {tx.date}
+                        {tx.correction && (
+                          <span className="ml-1.5 font-sans text-[9px] text-amber-500 border border-amber-500/30 rounded px-1 align-middle" title="Корректирующая запись в закрытый период (Фаза 3.5)">корр.</span>
+                        )}
+                      </td>
                       <td className="px-4 py-2 text-sm text-[var(--fg)]">{cpName.get(tx.counterpartyId) || '—'}</td>
                       <td className="px-4 py-2 text-xs text-[var(--text-muted)] truncate max-w-xs" title={tx.purpose}>{tx.purpose || '—'}</td>
                       <td className="px-4 py-2 text-[11px] text-[var(--text-muted)] truncate max-w-[140px]" title={tx.source}>{tx.source}</td>

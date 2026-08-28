@@ -15,7 +15,7 @@ import { LedgerView } from "../components/LedgerView";
 import { SellerView } from "../components/SellerView";
 import { loadStore, saveStore, importDocumentToStore } from "../lib/store/store";
 import { createId } from "../lib/store/schema";
-import type { LedgerStore, BudgetGoal, Account, FxRate } from "../lib/store/schema";
+import type { LedgerStore, BudgetGoal, Account, FxRate, Period, Transaction } from "../lib/store/schema";
 
 // recharts (~400КБ) грузится лениво — только при открытии вкладки «Аналитика»
 const RichAnalyticsReport = React.lazy(() =>
@@ -139,6 +139,33 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
       setLedger(saved);
     } catch (e) {
       console.error('[ledger] Ошибка сохранения курсов валют:', e);
+    }
+  }, []);
+
+  // Сохранить периоды / операции (Фаза 3.5: закрытие, корректирующие записи)
+  const persistPeriods = useCallback(async (periods: Period[]) => {
+    try {
+      const base = ledgerRef.current || (await loadStore());
+      const next = structuredClone(base);
+      next.periods = periods;
+      const saved = await saveStore(next);
+      ledgerRef.current = saved;
+      setLedger(saved);
+    } catch (e) {
+      console.error('[ledger] Ошибка сохранения периодов:', e);
+    }
+  }, []);
+
+  const persistTransactions = useCallback(async (transactions: Transaction[]) => {
+    try {
+      const base = ledgerRef.current || (await loadStore());
+      const next = structuredClone(base);
+      next.transactions = transactions;
+      const saved = await saveStore(next);
+      ledgerRef.current = saved;
+      setLedger(saved);
+    } catch (e) {
+      console.error('[ledger] Ошибка сохранения операций:', e);
     }
   }, []);
 
@@ -333,18 +360,22 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
     try {
       const base = ledgerRef.current || (await loadStore());
       const next = structuredClone(base);
-      let added = 0, skipped = 0;
+      let added = 0, skipped = 0, blocked = 0;
       for (const doc of documents) {
         const r = importDocumentToStore(next, doc, importAccountId || undefined);
         added += r.added;
         skipped += r.skipped;
+        blocked += r.blocked;
       }
       const saved = await saveStore(next);
       ledgerRef.current = saved;
       setLedger(saved);
-      setLedgerMsg(added > 0
-        ? `Импортировано: ${added} новых операций, пропущено ${skipped} (дубликаты / некорректные)`
-        : `Новых операций нет (пропущено ${skipped}: дубликаты или некорректные суммы)`);
+      const parts: string[] = [];
+      if (added > 0) parts.push(`Импортировано: ${added} новых операций`);
+      else parts.push('Новых операций нет');
+      if (skipped > 0) parts.push(`пропущено ${skipped} (дубликаты / некорректные)`);
+      if (blocked > 0) parts.push(`закрытые периоды: ${blocked} операций (откройте период или внесите корректировку)`);
+      setLedgerMsg(parts.join(', '));
     } catch (e: any) {
       setLedgerMsg('Ошибка импорта в учёт: ' + (e?.message || e));
     } finally {
@@ -827,6 +858,8 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
                     onBudgetsChange={(b) => void persistBudgets(b)}
                     onAccountsChange={(a) => void persistAccounts(a)}
                     onFxRatesChange={(r) => void persistFxRates(r)}
+                    onPeriodsChange={(p) => void persistPeriods(p)}
+                    onTransactionsChange={(t) => void persistTransactions(t)}
                   />
                 ) : (
                   <div className="h-full flex items-center justify-center text-[var(--text-muted)] text-sm">

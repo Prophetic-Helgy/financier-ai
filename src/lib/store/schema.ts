@@ -62,6 +62,7 @@ export interface Transaction {
   purpose: string;
   source: string; // имя файла-источника или 'manual'
   importedAt: string;
+  correction?: boolean; // корректирующая запись в закрытый период (Фаза 3.5) — единственная допустимая мутация закрытого месяца
 }
 
 /** Бюджетная цель: месячный лимит по категории (используется в Фазе 3) */

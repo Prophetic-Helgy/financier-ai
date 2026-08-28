@@ -11,6 +11,7 @@ import {
   createId,
 } from './schema';
 import { migrateStore } from './migrations';
+import { closedYMSet, ymOf } from './periods';
 import type { ParsedDocument, ParsedTransaction } from '../parsers/bankParsers';
 
 interface StoreApi {
@@ -85,7 +86,8 @@ export function getStoreCache(): LedgerStore | null {
 
 export interface ImportResult {
   added: number;
-  skipped: number;
+  skipped: number; // дубликаты / некорректные суммы
+  blocked: number; // операции в закрытых периодах (Фаза 3.5)
 }
 
 /** 'dd.mm.yyyy' / произвольный формат → 'YYYY-MM-DD' */
@@ -123,6 +125,9 @@ function counterpartyName(tx: ParsedTransaction): string {
  * сохранённые операции и повторные загрузки того же файла.
  * Валюта операций — валюта счёта (Фаза 3.3); accountId — счёт назначения
  * (по умолчанию первый счёт организации).
+ * Закрытые периоды (Фаза 3.5): операции с датой в закрытом месяце НЕ
+ * импортируются (blocked) — закрытый месяц меняют только корректирующие
+ * записи из вкладки «Учёт».
  */
 export function importDocumentToStore(store: LedgerStore, doc: ParsedDocument, accountId?: string): ImportResult {
   let org = store.organizations.find(o => o.isDefault) || store.organizations[0];
@@ -170,10 +175,13 @@ export function importDocumentToStore(store: LedgerStore, doc: ParsedDocument, a
     )
   );
 
+  const closed = closedYMSet(store);
   let added = 0;
   let skipped = 0;
+  let blocked = 0;
   for (const tx of doc.transactions) {
     if (!Number.isFinite(tx.amount) || tx.amount === 0) { skipped++; continue; }
+    if (closed.has(ymOf(normalizeDate(tx.date)))) { blocked++; continue; }
     const key = dedupKey({
       type: tx.type,
       date: tx.date,
@@ -201,5 +209,5 @@ export function importDocumentToStore(store: LedgerStore, doc: ParsedDocument, a
     });
     added++;
   }
-  return { added, skipped };
+  return { added, skipped, blocked };
 }
