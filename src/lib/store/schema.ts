@@ -4,7 +4,7 @@
  * через цепочку миграций в migrations.ts (обратная совместимость).
  */
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 /** UUID с фолбэком для окружений без crypto.randomUUID */
 export function createId(): string {
@@ -14,12 +14,14 @@ export function createId(): string {
   return 'id-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
 }
 
-/** Организация (юрлицо). Базовая сущность — всё ведётся в рамках организации */
+/** Организация (юрлицо). Базовая сущность — всё ведётся в рамках организации.
+ *  parentId — дерево холдинга (Фаза 4): головная компания → дочерние юрлица */
 export interface Organization {
   id: string;
   name: string;
   isDefault: boolean;
   createdAt: string;
+  parentId?: string | null;
 }
 
 export type AccountKind = 'bank' | 'card' | 'cash' | 'other';
@@ -34,10 +36,13 @@ export interface Account {
   createdAt: string;
 }
 
-/** Контрагент (партнёр, получатель/платёж) */
+/** Контрагент (партнёр, получатель/платёж).
+ *  orgId (Фаза 4): если контрагент — юрлицо собственной группы, операция
+ *  считается межфирменной и устраняется при консолидации */
 export interface Counterparty {
   id: string;
   name: string;
+  orgId?: string | null;
 }
 
 /** Категория (статья) дохода/расхода */
@@ -93,6 +98,21 @@ export interface Period {
 /** Роль профиля (Фаза 3.6): admin — полный доступ, member — всё кроме закрытия периодов и бэкапов, viewer — только просмотр */
 export type UserRole = 'admin' | 'member' | 'viewer';
 
+/** Запись журнала аудита (Фаза 4): кто/когда/что изменил */
+export interface AuditEntry {
+  id: string;
+  /** ISO-время действия */
+  at: string;
+  /** id профиля (UserProfile.id); имя рендерится на UI-слое */
+  profileId: string;
+  /** Действие: 'organizations.upsert' | 'transactions.import' | 'budgets.update' | ... */
+  action: string;
+  /** Сущность: 'organization' | 'transaction' | 'budget' | 'account' | 'fxRate' | 'period' | 'category' | 'user' | 'profile' | 'ledger' */
+  entity: string;
+  /** Краткая детализация (не более ~200 символов) */
+  detail: string;
+}
+
 /** Локальный профиль пользователя (семейный/совместный сценарий, Фаза 3.6) */
 export interface UserProfile {
   id: string;
@@ -131,6 +151,8 @@ export interface LedgerStore {
   fxRates: FxRate[];
   periods: Period[];
   users: UserProfile[];
+  /** Журнал аудита (Фаза 4); ограничивается 500 записями (tail) */
+  auditLog: AuditEntry[];
   manual: ManualEntries;
 }
 
@@ -154,6 +176,7 @@ export function createEmptyStore(): LedgerStore {
     fxRates: [],
     periods: [],
     users: [{ id: ownerId, name: 'Владелец', role: 'admin', visibleCategories: [], createdAt: now }],
+    auditLog: [],
     manual: { incomes: [], credits: [], assets: [] },
   };
 }

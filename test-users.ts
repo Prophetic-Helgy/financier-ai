@@ -52,7 +52,7 @@ function main() {
   const v2 = makeV2();
   const txBefore = v2.transactions.map((t: any) => t.id).sort();
   const s3 = migrateStore(v2);
-  check('schemaVersion = 3', s3.schemaVersion === 3, String(s3.schemaVersion));
+  check('schemaVersion = 4 (цепочка доходит до v4)', s3.schemaVersion === 4, String(s3.schemaVersion));
   check('Создан профиль-владелец admin', s3.users.length === 1 && s3.users[0].role === 'admin', JSON.stringify(s3.users));
   check('meta.currentUserId ссылается на владельца', s3.meta.currentUserId === s3.users[0].id);
   check('Операции сохранены (id не изменились)',
@@ -64,7 +64,7 @@ function main() {
   const s3b = migrateStore(s3);
   check('id профиля не изменился', s3b.users[0].id === s3.users[0].id, `${s3.users[0].id} vs ${s3b.users[0].id}`);
   check('currentUserId не изменился', s3b.meta.currentUserId === s3.meta.currentUserId);
-  check('schemaVersion остался 3', s3b.schemaVersion === 3);
+  check('schemaVersion остался 4', s3b.schemaVersion === 4);
 
   console.log('\n[3] currentProfile: фолбэки');
   const owner = s3.users[0];

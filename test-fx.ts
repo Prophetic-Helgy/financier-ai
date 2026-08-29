@@ -123,7 +123,7 @@ function main() {
     budgets: [], periods: [], manual: { incomes: [], credits: [], assets: [] },
   };
   const s2 = migrateStore(v1);
-  check('schemaVersion = 3 (v1 → v2 → v3)', s2.schemaVersion === 3);
+  check('schemaVersion = 4 (v1 → v2 → v3 → v4)', s2.schemaVersion === 4);
   check('старая операция получила currency = RUB', s2.transactions[0].currency === 'RUB');
   check('fxRates = []', Array.isArray(s2.fxRates) && s2.fxRates.length === 0);
   check('создан профиль-владелец (Фаза 3.6)', s2.users.length === 1 && s2.users[0].role === 'admin');

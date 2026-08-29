@@ -25,13 +25,14 @@ export type RoleAction =
   | 'accounts'     // CRUD счетов
   | 'fxRates'      // курсы валют
   | 'periods'      // закрытие/открытие периодов и корректировки
+  | 'organizations' // CRUD дерева юрлиц группы (Фаза 4, только владелец)
   | 'restore';     // восстановление из бэкапа / файлов
 
-/** Матрица прав: admin — всё; member — всё кроме периодов и бэкапов; viewer — только просмотр */
+/** Матрица прав: admin — всё; member — всё кроме периодов, структуры группы и бэкапов; viewer — только просмотр */
 const MATRIX: Record<UserRole, Record<RoleAction, boolean>> = {
-  admin: { import: true, categorize: true, categories: true, budgets: true, accounts: true, fxRates: true, periods: true, restore: true },
-  member: { import: true, categorize: true, categories: true, budgets: true, accounts: true, fxRates: true, periods: false, restore: false },
-  viewer: { import: false, categorize: false, categories: false, budgets: false, accounts: false, fxRates: false, periods: false, restore: false },
+  admin: { import: true, categorize: true, categories: true, budgets: true, accounts: true, fxRates: true, periods: true, organizations: true, restore: true },
+  member: { import: true, categorize: true, categories: true, budgets: true, accounts: true, fxRates: true, periods: false, organizations: false, restore: false },
+  viewer: { import: false, categorize: false, categories: false, budgets: false, accounts: false, fxRates: false, periods: false, organizations: false, restore: false },
 };
 
 /** Может ли роль выполнить действие */

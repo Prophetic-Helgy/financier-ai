@@ -15,8 +15,9 @@ import { LedgerView } from "../components/LedgerView";
 import { SellerView } from "../components/SellerView";
 import { loadStore, saveStore, importDocumentToStore } from "../lib/store/store";
 import { createId } from "../lib/store/schema";
-import type { LedgerStore, BudgetGoal, Account, FxRate, Period, Transaction, Category, UserProfile } from "../lib/store/schema";
+import type { LedgerStore, BudgetGoal, Account, FxRate, Period, Transaction, Category, UserProfile, Organization, Counterparty } from "../lib/store/schema";
 import { can, currentProfile } from "../lib/store/roles";
+import { appendAudit } from "../lib/store/audit";
 
 // recharts (~400КБ) грузится лениво — только при открытии вкладки «Аналитика»
 const RichAnalyticsReport = React.lazy(() =>
@@ -94,6 +95,7 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
       const base = ledgerRef.current || (await loadStore());
       const next = structuredClone(base);
       next.manual = { incomes, credits, assets };
+      appendAudit(next, 'manual.update', 'manual', `доходы: ${incomes.length}, кредиты: ${credits.length}, активы: ${assets.length}`, new Date().toISOString());
       const saved = await saveStore(next);
       ledgerRef.current = saved;
       setLedger(saved);
@@ -108,6 +110,7 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
       const base = ledgerRef.current || (await loadStore());
       const next = structuredClone(base);
       next.budgets = budgets;
+      appendAudit(next, 'budgets.update', 'budget', `бюджетов: ${budgets.length}`, new Date().toISOString());
       const saved = await saveStore(next);
       ledgerRef.current = saved;
       setLedger(saved);
@@ -122,6 +125,7 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
       const base = ledgerRef.current || (await loadStore());
       const next = structuredClone(base);
       next.accounts = accounts;
+      appendAudit(next, 'accounts.update', 'account', `счетов: ${accounts.length}`, new Date().toISOString());
       const saved = await saveStore(next);
       ledgerRef.current = saved;
       setLedger(saved);
@@ -135,6 +139,7 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
       const base = ledgerRef.current || (await loadStore());
       const next = structuredClone(base);
       next.fxRates = fxRates;
+      appendAudit(next, 'fxRates.update', 'fxRate', `курсов: ${fxRates.length}`, new Date().toISOString());
       const saved = await saveStore(next);
       ledgerRef.current = saved;
       setLedger(saved);
@@ -149,6 +154,7 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
       const base = ledgerRef.current || (await loadStore());
       const next = structuredClone(base);
       next.periods = periods;
+      appendAudit(next, 'periods.update', 'period', `периодов: ${periods.length}`, new Date().toISOString());
       const saved = await saveStore(next);
       ledgerRef.current = saved;
       setLedger(saved);
@@ -162,6 +168,7 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
       const base = ledgerRef.current || (await loadStore());
       const next = structuredClone(base);
       next.transactions = transactions;
+      appendAudit(next, 'transactions.update', 'transaction', `операций: ${transactions.length}`, new Date().toISOString());
       const saved = await saveStore(next);
       ledgerRef.current = saved;
       setLedger(saved);
@@ -176,6 +183,7 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
       const base = ledgerRef.current || (await loadStore());
       const next = structuredClone(base);
       next.categories = categories;
+      appendAudit(next, 'categories.update', 'category', `категорий: ${categories.length}`, new Date().toISOString());
       const saved = await saveStore(next);
       ledgerRef.current = saved;
       setLedger(saved);
@@ -190,6 +198,7 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
       const base = ledgerRef.current || (await loadStore());
       const next = structuredClone(base);
       next.users = users;
+      appendAudit(next, 'users.update', 'user', `профилей: ${users.length}`, new Date().toISOString());
       const saved = await saveStore(next);
       ledgerRef.current = saved;
       setLedger(saved);
@@ -203,11 +212,42 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
       const base = ledgerRef.current || (await loadStore());
       const next = structuredClone(base);
       next.meta = { ...next.meta, currentUserId: userId };
+      const name = next.users.find(u => u.id === userId)?.name || userId;
+      appendAudit(next, 'profile.switch', 'profile', `профиль: ${name}`, new Date().toISOString());
       const saved = await saveStore(next);
       ledgerRef.current = saved;
       setLedger(saved);
     } catch (e) {
       console.error('[ledger] Ошибка переключения профиля:', e);
+    }
+  }, []);
+
+  // Сохранить дерево юрлиц группы / связь контрагента с юрлицом (Фаза 4: холдинг)
+  const persistOrganizations = useCallback(async (organizations: Organization[]) => {
+    try {
+      const base = ledgerRef.current || (await loadStore());
+      const next = structuredClone(base);
+      next.organizations = organizations;
+      appendAudit(next, 'organizations.update', 'organization', `юрлиц: ${organizations.length}`, new Date().toISOString());
+      const saved = await saveStore(next);
+      ledgerRef.current = saved;
+      setLedger(saved);
+    } catch (e) {
+      console.error('[ledger] Ошибка сохранения организаций:', e);
+    }
+  }, []);
+
+  const persistCounterparties = useCallback(async (counterparties: Counterparty[]) => {
+    try {
+      const base = ledgerRef.current || (await loadStore());
+      const next = structuredClone(base);
+      next.counterparties = counterparties;
+      appendAudit(next, 'counterparties.update', 'counterparty', `привязано к юрлицам группы: ${counterparties.filter(c => c.orgId).length}`, new Date().toISOString());
+      const saved = await saveStore(next);
+      ledgerRef.current = saved;
+      setLedger(saved);
+    } catch (e) {
+      console.error('[ledger] Ошибка сохранения контрагентов:', e);
     }
   }, []);
 
@@ -410,6 +450,7 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
         blocked += r.blocked;
         categorized += r.categorized;
       }
+      appendAudit(next, 'transactions.import', 'transaction', `импорт: ${documents.length} файл(а), новых операций: ${added}`, new Date().toISOString());
       const saved = await saveStore(next);
       ledgerRef.current = saved;
       setLedger(saved);
@@ -438,6 +479,21 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
     setManualIncomes(s.manual.incomes);
     setManualCredits(s.manual.credits);
     setManualAssets(s.manual.assets);
+    return s;
+  }, []);
+
+  // Фаза 4: записать событие аудита поверх свежего состояния с диска (рестор идёт в main-процессе)
+  const auditAfterRestore = useCallback(async (detail: string) => {
+    try {
+      const base = ledgerRef.current || (await loadStore());
+      const next = structuredClone(base);
+      appendAudit(next, 'ledger.restore', 'ledger', detail, new Date().toISOString());
+      const saved = await saveStore(next);
+      ledgerRef.current = saved;
+      setLedger(saved);
+    } catch (e) {
+      console.error('[ledger] Ошибка записи аудита после восстановления:', e);
+    }
   }, []);
 
   const handleLedgerExportBackup = useCallback(async () => {
@@ -458,12 +514,13 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
     const res = await api.importFile();
     if (res?.ok) {
       await reloadLedger();
+      await auditAfterRestore('восстановлено из файла бэкапа');
       setLedgerMsg('Данные восстановлены из файла');
     } else if (res?.error) {
       setLedgerMsg('Ошибка восстановления: ' + res.error);
     }
     setLedgerBusy(false);
-  }, [reloadLedger]);
+  }, [reloadLedger, auditAfterRestore]);
 
   const handleLedgerRestoreLatestBackup = useCallback(async () => {
     const api = window.electronAPI?.store;
@@ -476,12 +533,13 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
     const res = await api.restoreBackup(1);
     if (res?.ok) {
       await reloadLedger();
+      await auditAfterRestore('восстановлен последний автоматический бэкап');
       setLedgerMsg('Восстановлен последний автоматический бэкап');
     } else if (res?.error) {
       setLedgerMsg('Ошибка восстановления: ' + res.error);
     }
     setLedgerBusy(false);
-  }, [reloadLedger]);
+  }, [reloadLedger, auditAfterRestore]);
 
   const totalIncome = combinedDocument?.transactions.filter(t => t.type === 'income').reduce((acc, curr) => acc + curr.amount, 0) || 0;
   const totalExpense = combinedDocument?.transactions.filter(t => t.type === 'expense').reduce((acc, curr) => acc + curr.amount, 0) || 0;
@@ -575,9 +633,11 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
                   className="w-full bg-[var(--surface-inner)] border border-[var(--border)] rounded-md text-[11px] text-[var(--fg)] px-2 py-1.5 mb-1.5"
                   title="Счёт, в который импортировать операции (валюта операций = валюта счёта)"
                 >
-                  {ledger.accounts.map(a => (
-                    <option key={a.id} value={a.id}>{a.name} ({a.currency})</option>
-                  ))}
+                  {ledger.accounts.map(a => {
+                    const org = ledger.organizations.find(o => o.id === a.orgId);
+                    const orgSuffix = ledger.organizations.length > 1 && org ? ` · ${org.name}` : '';
+                    return <option key={a.id} value={a.id}>{a.name}{orgSuffix} ({a.currency})</option>;
+                  })}
                 </select>
               )}
               <button
@@ -911,6 +971,8 @@ export function Dashboard({ mode, onBack }: DashboardProps) {
                     onCategoriesChange={(c) => void persistCategories(c)}
                     onProfileChange={(id) => void persistCurrentProfile(id)}
                     onUsersChange={(u) => void persistUsers(u)}
+                    onOrganizationsChange={(o) => void persistOrganizations(o)}
+                    onCounterpartiesChange={(c) => void persistCounterparties(c)}
                   />
                 ) : (
                   <div className="h-full flex items-center justify-center text-[var(--text-muted)] text-sm">

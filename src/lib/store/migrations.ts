@@ -35,6 +35,15 @@ const MIGRATIONS: Record<number, (s: any) => any> = {
       schemaVersion: 3,
     };
   },
+  // v3 → v4 (Фаза 4, холдинг/консолидация): дерево организаций (parentId),
+  // связь контрагента с юрлицом группы (orgId) и журнал аудита (auditLog).
+  // Все поля — расширяющие: старые данные не трогаем, только дополняем.
+  4: (v3) => ({
+    ...v3,
+    organizations: (v3.organizations || []).map((o: any) => ({ ...o, parentId: o.parentId ?? null })),
+    auditLog: Array.isArray(v3.auditLog) ? v3.auditLog : [],
+    schemaVersion: 4,
+  }),
 };
 
 /**

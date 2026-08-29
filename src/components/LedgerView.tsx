@@ -1,9 +1,11 @@
 import React, { useMemo, useState } from 'react';
-import { Landmark, FileDown, FileUp, RotateCcw, Target, Trash2, Coins, Wallet, CalendarClock, Tags, Sparkles, Users } from 'lucide-react';
-import { LedgerStore, BudgetGoal, Account, FxRate, Period, Transaction, Category, UserProfile, createId } from '../lib/store/schema';
+import { Landmark, FileDown, FileUp, RotateCcw, Target, Trash2, Coins, Wallet, CalendarClock, Tags, Sparkles, Users, Building2, Network, ScrollText } from 'lucide-react';
+import { LedgerStore, BudgetGoal, Account, FxRate, Period, Transaction, Category, UserProfile, Organization, Counterparty, createId } from '../lib/store/schema';
 import type { UserRole } from '../lib/store/schema';
 import { ROLE_LABELS, can, currentProfile, visibleTransactions } from '../lib/store/roles';
 import type { RoleAction } from '../lib/store/roles';
+import { groupPnl, consolidationBalanced, canDeleteOrg, orgParentOptions } from '../lib/store/consolidation';
+import { auditProfileName } from '../lib/store/audit';
 import { budgetSummary, monthForecast, currentYM, daysInMonth } from '../lib/store/budgets';
 import {
   totalsInBase, currencyBreakdown, monthFxGainLoss, toBase,
@@ -31,6 +33,8 @@ interface LedgerViewProps {
   onCategoriesChange: (categories: Category[]) => void;
   onProfileChange: (userId: string) => void;
   onUsersChange: (users: UserProfile[]) => void;
+  onOrganizationsChange: (organizations: Organization[]) => void;
+  onCounterpartiesChange: (counterparties: Counterparty[]) => void;
 }
 
 const COMMON_CURRENCIES = ['USD', 'EUR', 'GBP', 'CNY', 'KZT', 'BYN', 'AMD', 'AZN', 'UZS', 'PLN', 'TRY'];
@@ -84,7 +88,7 @@ function DeltaChip({ value }: { value: number | null }) {
  * Вкладка «Учёт»: что сохранено в хранилище (переживает перезапуск),
  * итоги, разбивка по месяцам, журнал операций, бэкапы.
  */
-export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onRestoreLatestBackup, onBudgetsChange, onAccountsChange, onFxRatesChange, onPeriodsChange, onTransactionsChange, onCategoriesChange, onProfileChange, onUsersChange }: LedgerViewProps) {
+export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onRestoreLatestBackup, onBudgetsChange, onAccountsChange, onFxRatesChange, onPeriodsChange, onTransactionsChange, onCategoriesChange, onProfileChange, onUsersChange, onOrganizationsChange, onCounterpartiesChange }: LedgerViewProps) {
   // Фаза 3.6: активный профиль, его видимые операции и доступ к действиям по роли.
   // view — «срез» хранилища с отфильтрованными операциями для periodRows/budgetSummary.
   const profile = currentProfile(store);
@@ -429,6 +433,69 @@ export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onResto
   };
   const hasUserCategories = store.categories.some(c => !c.builtin);
 
+  // Фаза 4: дерево юрлиц группы (мульти-энтити) и связь «контрагент = юрлицо группы»
+  const [orgName, setOrgName] = useState('');
+  const [orgParent, setOrgParent] = useState('');
+  const linkedCpByOrg = useMemo(() => {
+    const m = new Map<string, Counterparty>();
+    for (const c of store.counterparties) if (c.orgId) m.set(c.orgId, c);
+    return m;
+  }, [store.counterparties]);
+  const freeCounterparties = useMemo(
+    () => store.counterparties.filter(c => !c.orgId),
+    [store.counterparties]
+  );
+
+  const addOrg = () => {
+    const name = orgName.trim();
+    if (!name) return;
+    onOrganizationsChange([...store.organizations, {
+      id: createId(), name, isDefault: false, createdAt: new Date().toISOString(),
+      parentId: orgParent || null,
+    }]);
+    setOrgName('');
+    setOrgParent('');
+  };
+  const removeOrg = (id: string) => {
+    if (!canDeleteOrg(store, id).ok) return;
+    onOrganizationsChange(store.organizations.filter(o => o.id !== id));
+    if (store.counterparties.some(c => c.orgId === id)) {
+      onCounterpartiesChange(store.counterparties.map(c => c.orgId === id ? { ...c, orgId: null } : c));
+    }
+  };
+  const changeOrgParent = (id: string, parentId: string) => {
+    const allowed = new Set(orgParentOptions(store, id));
+    const np = parentId && allowed.has(parentId) ? parentId : null;
+    if ((store.organizations.find(o => o.id === id)?.parentId ?? null) === np) return;
+    onOrganizationsChange(store.organizations.map(o => o.id === id ? { ...o, parentId: np } : o));
+  };
+  // Привязка/отвязка контрагента к юрлицу группы: один контрагент — у одного юрлица,
+  // одно юрлицо — у одного контрагента; повторный клик снимает связь
+  const linkCounterparty = (orgId: string, cpId: string) => {
+    const target = cpId && store.counterparties.some(c => c.id === cpId) ? cpId : null;
+    onCounterpartiesChange(store.counterparties.map(c => {
+      if (c.id === target) return { ...c, orgId: c.orgId === orgId ? null : orgId };
+      if (c.orgId === orgId) return { ...c, orgId: null };
+      return c;
+    }));
+  };
+
+  // Фаза 4: консолидированный P&L группы (elimination межфирменных операций)
+  const [consYM, setConsYM] = useState(''); // '' — все периоды
+  const consOptions = useMemo(() => {
+    const s = new Set<string>();
+    for (const t of store.transactions) {
+      const ym = (t.date || '').slice(0, 7);
+      if (/^\d{4}-\d{2}$/.test(ym)) s.add(ym);
+    }
+    return [...s].sort((a, b) => b.localeCompare(a));
+  }, [store.transactions]);
+  const group = useMemo(() => groupPnl(store, consYM || undefined), [store, consYM]);
+  const balanced = useMemo(() => consolidationBalanced(store, consYM || undefined), [store, consYM]);
+
+  // Фаза 4: журнал аудита (кто/когда/что) — последние записи
+  const auditRows = useMemo(() => [...(store.auditLog ?? [])].reverse().slice(0, 30), [store.auditLog]);
+
   return (
     <div className="h-full overflow-y-auto p-6">
       <div className="max-w-5xl mx-auto">
@@ -663,6 +730,93 @@ export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onResto
             </div>
           </div>
         </div>
+
+        {/* Организации (Фаза 4): юрлица группы — дерево, межфирменные контрагенты */}
+        {(store.organizations.length > 1 || canDo('organizations')) && (
+          <div className="mb-6 bg-[var(--surface)] border border-[var(--border)] rounded-xl overflow-hidden">
+            <div className="px-4 py-2.5 border-b border-[var(--border)] bg-[var(--surface-inner)]/50">
+              <h3 className="font-semibold text-sm text-[var(--fg)] flex items-center gap-1.5">
+                <Building2 className="w-3.5 h-3.5 text-[var(--text-muted)]" /> Организации (группа)
+              </h3>
+            </div>
+            <div className="p-4 space-y-2">
+              <div className="space-y-1.5">
+                {store.organizations.map(o => {
+                  const chk = canDeleteOrg(store, o.id);
+                  const linked = linkedCpByOrg.get(o.id);
+                  const parentName = o.parentId ? store.organizations.find(p => p.id === o.parentId)?.name : null;
+                  return (
+                    <div key={o.id} className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs text-[var(--fg)] w-44 truncate" title={o.name}>{o.name}</span>
+                      {o.isDefault && <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--surface-inner)] text-[var(--text-muted)]">основная</span>}
+                      {parentName && <span className="text-[10px] text-[var(--text-muted)]">подчинена: {parentName}</span>}
+                      {linked && <span className="text-[10px] text-cyan-400">контрагент: {linked.name}</span>}
+                      {canDo('organizations') && (
+                        <>
+                          <select
+                            value={o.parentId ?? ''}
+                            onChange={e => changeOrgParent(o.id, e.target.value)}
+                            disabled={o.isDefault}
+                            className={fieldCls}
+                            title={o.isDefault ? 'У основной организации нет родителя' : 'Родительская организация (дерево холдинга)'}
+                          >
+                            <option value="">— без родителя —</option>
+                            {orgParentOptions(store, o.id).map(pid => (
+                              <option key={pid} value={pid}>{store.organizations.find(p => p.id === pid)?.name}</option>
+                            ))}
+                          </select>
+                          <select
+                            value={linked?.id ?? ''}
+                            onChange={e => linkCounterparty(o.id, e.target.value)}
+                            className={fieldCls}
+                            title="Внешний контрагент = юрлицо группы: операции с ним считаются межфирменными и элиминируются при консолидации"
+                          >
+                            <option value="">— контрагент не привязан —</option>
+                            {(linked ? [linked, ...freeCounterparties] : freeCounterparties).map(c => (
+                              <option key={c.id} value={c.id}>{c.name}</option>
+                            ))}
+                          </select>
+                          <button
+                            onClick={() => removeOrg(o.id)}
+                            disabled={!chk.ok}
+                            title={chk.ok ? 'Удалить организацию' : chk.reason}
+                            className="p-0.5 text-[var(--text-muted)] hover:text-rose-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              {canDo('organizations') && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <input
+                    value={orgName}
+                    onChange={e => setOrgName(e.target.value)}
+                    placeholder="Название юрлица (например: ООО «Альфа»)"
+                    className={fieldCls + " w-52"}
+                  />
+                  <select value={orgParent} onChange={e => setOrgParent(e.target.value)} className={fieldCls}>
+                    <option value="">— без родителя —</option>
+                    {store.organizations.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                  </select>
+                  <button
+                    onClick={addOrg}
+                    disabled={!orgName.trim()}
+                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 rounded-md text-xs font-medium text-white transition-colors"
+                  >
+                    Добавить юрлицо
+                  </button>
+                  <span className="text-[10px] text-[var(--text-muted)]">
+                    Счета и операции привязываются к юрлицу (при импорте — через счёт). Межфирменное: привяжите контрагента к юрлицу группы.
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Курсы валют (Фаза 3.3) */}
         {showFxSection && (
@@ -1073,6 +1227,123 @@ export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onResto
             </div>
           </div>
         </div>
+
+        {/* Консолидация (Фаза 4): групповой P&L с элиминированием межфирменных операций */}
+        {store.organizations.length > 1 && (
+          <div className="mb-6 bg-[var(--surface)] border border-[var(--border)] rounded-xl overflow-hidden">
+            <div className="px-4 py-2.5 border-b border-[var(--border)] bg-[var(--surface-inner)]/50 flex items-center justify-between gap-3 flex-wrap">
+              <h3 className="font-semibold text-sm text-[var(--fg)] flex items-center gap-1.5">
+                <Network className="w-3.5 h-3.5 text-[var(--text-muted)]" /> Консолидация (группа, в {BASE_CURRENCY})
+              </h3>
+              <select
+                value={consYM}
+                onChange={e => setConsYM(e.target.value)}
+                className="bg-[var(--surface-inner)] border border-[var(--border)] rounded-md text-xs text-[var(--fg)] px-2 py-1.5"
+                title="Период консолидированного отчёта"
+              >
+                <option value="">Все периоды</option>
+                {consOptions.map(ym => <option key={ym} value={ym}>{monthLabel(ym)}</option>)}
+              </select>
+            </div>
+            <div className="p-4 space-y-3">
+              {group.rows.length === 0 ? (
+                <p className="text-xs text-[var(--text-muted)]">В выбранном периоде нет операций.</p>
+              ) : (
+                <>
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="text-[10px] uppercase tracking-wider text-[var(--text-muted)]">
+                        <th className="py-1.5 font-medium">Юрлицо</th>
+                        <th className="py-1.5 font-medium text-right">Доходы</th>
+                        <th className="py-1.5 font-medium text-right">Расходы</th>
+                        <th className="py-1.5 font-medium text-right">Итог</th>
+                        <th className="py-1.5 font-medium text-right" title="Межфирменные операции: доходы / расходы с юрлицами группы (из итогов группы исключаются)">Межфирм.</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[var(--border)]">
+                      {group.rows.map(r => (
+                        <tr key={r.orgId} className="hover:bg-[var(--surface-inner)]/50 transition-colors">
+                          <td className="py-1.5 text-xs text-[var(--fg)]">{r.orgName}</td>
+                          <td className="py-1.5 text-xs font-mono text-right text-emerald-500">+{fmt(r.income)}</td>
+                          <td className="py-1.5 text-xs font-mono text-right text-[var(--fg)]">-{fmt(r.expense)}</td>
+                          <td className={cn("py-1.5 text-xs font-mono text-right", r.net >= 0 ? 'text-[var(--fg)]' : 'text-rose-400')}>{fmt(r.net)}</td>
+                          <td className="py-1.5 text-[10px] font-mono text-right text-[var(--text-muted)]">
+                            {r.icIncome > 0 && <span className="text-emerald-500">+{fmt(r.icIncome)}</span>}
+                            {r.icIncome > 0 && r.icExpense > 0 && ' / '}
+                            {r.icExpense > 0 && <span className="text-rose-400">-{fmt(r.icExpense)}</span>}
+                            {r.icIncome === 0 && r.icExpense === 0 && '—'}
+                          </td>
+                        </tr>
+                      ))}
+                      <tr className="bg-[var(--surface-inner)]/60">
+                        <td className="py-1.5 text-xs font-semibold text-[var(--fg)]">Группа (после элиминирования)</td>
+                        <td className="py-1.5 text-xs font-mono font-medium text-right text-emerald-500">+{fmt(group.group.income)}</td>
+                        <td className="py-1.5 text-xs font-mono font-medium text-right text-[var(--fg)]">-{fmt(group.group.expense)}</td>
+                        <td className={cn("py-1.5 text-xs font-mono font-medium text-right", group.group.net >= 0 ? 'text-[var(--fg)]' : 'text-rose-400')}>{fmt(group.group.net)}</td>
+                        <td className="py-1.5 text-[10px] font-mono text-right text-[var(--text-muted)]">
+                          −{fmt(group.eliminated.amount)}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[10px] text-[var(--text-muted)]">
+                      Погашено пар (A→B: расход + встречный доход): {group.eliminated.pairs} на {fmt(group.eliminated.amount)} {BASE_CURRENCY}
+                    </span>
+                    {group.unmatched.count > 0 ? (
+                      <span className="text-[10px] font-medium text-amber-500 bg-amber-500/10 border border-amber-500/20 rounded-md px-2 py-0.5"
+                        title="Межфирменная операция проведена только одной стороной — группы не сходится, проверьте книги юрлиц">
+                        не погашено: {group.unmatched.count} оп. на {fmt(group.unmatched.amount)} {BASE_CURRENCY} — книги юрлиц не сходятся
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-medium text-emerald-500 bg-emerald-500/10 border border-emerald-500/20 rounded-md px-2 py-0.5">
+                        {balanced.ok ? 'Консолидированный результат сходится: итог группы = сумма итогов юрлиц' : `Расхождение: ${fmt(balanced.diff)} ${BASE_CURRENCY}`}
+                      </span>
+                    )}
+                  </div>
+                </>
+              )}
+              <p className="text-[10px] text-[var(--text-muted)]">
+                Межфирменные операции (контрагент — юрлицо группы, привязка в разделе «Организации») не являются потоком группы и вычитаются из итога;
+                сопоставление пар — по дате, сумме и валюте.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Журнал аудита (Фаза 4): кто/когда/что изменил */}
+        {auditRows.length > 0 && (
+          <div className="mb-6 bg-[var(--surface)] border border-[var(--border)] rounded-xl overflow-hidden">
+            <div className="px-4 py-2.5 border-b border-[var(--border)] bg-[var(--surface-inner)]/50">
+              <h3 className="font-semibold text-sm text-[var(--fg)] flex items-center gap-1.5">
+                <ScrollText className="w-3.5 h-3.5 text-[var(--text-muted)]" /> Журнал аудита
+                <span className="text-[var(--text-muted)] font-normal text-xs ml-1">(последние {auditRows.length} из {(store.auditLog ?? []).length})</span>
+              </h3>
+            </div>
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="text-[10px] uppercase tracking-wider text-[var(--text-muted)]">
+                  <th className="px-4 py-2 font-medium border-b border-[var(--border)]">Когда</th>
+                  <th className="px-4 py-2 font-medium border-b border-[var(--border)]">Профиль</th>
+                  <th className="px-4 py-2 font-medium border-b border-[var(--border)]">Действие</th>
+                  <th className="px-4 py-2 font-medium border-b border-[var(--border)]">Детали</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--border)]">
+                {auditRows.map(e => (
+                  <tr key={e.id} className="hover:bg-[var(--surface-inner)]/50 transition-colors">
+                    <td className="px-4 py-1.5 text-[11px] font-mono whitespace-nowrap text-[var(--text-muted)]">
+                      {new Date(e.at).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                    </td>
+                    <td className="px-4 py-1.5 text-xs text-[var(--fg)]">{auditProfileName(store, e.profileId)}</td>
+                    <td className="px-4 py-1.5 text-[11px] font-mono text-[var(--text-muted)]">{e.action}</td>
+                    <td className="px-4 py-1.5 text-[11px] text-[var(--text-muted)]">{e.detail}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
 
         {txs.length === 0 ? (
           <div className="h-64 flex flex-col items-center justify-center text-center text-[var(--text-muted)]">
