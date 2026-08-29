@@ -132,7 +132,7 @@ AuditEntry   { id, at, profileId, action, entity, detail }     // Фаза 4: ж
 
 ### 2.6 Лицензирование / демо-режим
 
-- Механизма лицензирования **нет вовсе**. Никакой активации, trial, key-файла.
+- ✅ **Решено (2026-08-29, Фаза 6)**: [src/lib/licensing.ts](src/lib/licensing.ts) — policy-флаг `LICENSE_POLICY='open'` (сейчас: бесплатно, полная функциональность, без искусственных ограничений) + `getLicenseInfo()` и строка «Лицензия: Открытый режим» в шапке вкладки «Учёт». Активации/trial/ключей нет — платный механизм только дизайн: [docs/PAYED_LICENSING.md](docs/PAYED_LICENSING.md) (ключ с HMAC, привязка к машине, онлайн/офлайн-активация, grace, отзыв/продление).
 - «Portable-режим»: `build-portable.ts` генерирует `public/portable-config.json` с заглушкой endpoint, но **приложение этот файл не читает**; `isPortableMode()` ([llmIntegration.ts:17](src/lib/llmIntegration.ts#L17)) экспортируется, но нигде не вызывается (мёртвый код). Де-факто portable-сборка = обычная сборка.
 - Демо: [MockDashboardView](src/components/MockDashboardView.tsx) — статичная демонстрационная панель с mock-данными при отсутствии файлов (это маркетинговая витрина, не демо-режим с ограничениями).
 
@@ -287,8 +287,8 @@ AuditEntry   { id, at, profileId, action, entity, detail }     // Фаза 4: ж
 15. **Мусор в репозитории**: реальные клиентские данные (ref_data, 119 файлов в src/components/), 2 RAR-архива ~480 МБ, 6 test-*.ts + логи + HTML-отчёты в корне, пустой all-out-files.txt, vite.log. (Дубликат electron/main.js удалён 2026-08-26.)
 16. **Без git-репозитория** — нет истории, нет ветвления, нет возможности отката.
 17. ✅ **Частично решено (Фаза 5, 2026-08-29)**: 9 автосьютов tsx / 262 проверки (`npx tsx test-*.ts`) покрывают ядро учёта — импорт, FX, бюджеты, периоды, роли, OCR, консолидацию, крайние значения; регрессия обязательна до коммита. Остаток: нет раннера в CI, main-процесс Electron не покрыт.
-18. **Без лицензирования** — ТЗ требует механизм (open + будущий платный).
-19. **PDF-экспорт** заявлен в README, реализации нет (уточнить).
+18. ✅ **Решено (Фаза 6, 2026-08-29)**: [src/lib/licensing.ts](src/lib/licensing.ts) — policy-флаг `'open'` (без ограничений) + `getLicenseInfo()`; платный режим — дизайн в [docs/PAYED_LICENSING.md](docs/PAYED_LICENSING.md), в релиз не включён.
+19. ✅ **Решено (Фаза 6, 2026-08-29)**: README переписан — обещание PDF-экспорта убрано (реализации нет); секция «Чего в этой версии нет» (честный список).
 20. ✅ **Исправлено (Фаза 3.1, 2026-08-28)**: ZIP и RAR в UI (см. §3.2); 7Z по-прежнему не поддерживается.
 21. ✅ **Очищено (2026-08-29, Фаза 5)**: удалены CLI-харнесы massive-test.ts (296) и test-real-data.ts (279) и PresentationViewer.tsx (85) + мёртвый импорт в RichAnalyticsReport — 660 строк (было ~1.5К → остаток ~0.4К → ~0.06К). Остаток: `mockToParsedDocument`, `generateCompetitorFeatureReport`, `REVIEW_INSIGHTS`, `getCompetitorsBySegment` (небольшие мёртвые функции в lib). Тяжёлые зависимости: `docx`/`pptxgenjs`/`xlsx` грузятся отдельным ленивым чанком (~622 КБ), `exceljs` — только в корневом debug-скрипте (не в приложении).
 21.1 (история) **Мёртвый код ~0.6К строк** (было ~1.5К; [lib/export.ts](src/lib/export.ts) подключён 2026-08-26, [sellerCalculators.ts](src/lib/sellerCalculators.ts) (376) + [marketplaceAnalytics.ts](src/lib/marketplaceAnalytics.ts) (183) подключены к вкладке «Селлер» 2026-08-28): остаются `mockToParsedDocument`, `generateCompetitorFeatureReport`, `REVIEW_INSIGHTS`, `getCompetitorsBySegment`, мёртвые импорты в RichAnalyticsReport. (Дубликат `electron/main.js` удалён 2026-08-26. Уточнение 2026-08-29: PresentationViewer.tsx импортировался RichAnalyticsReport.tsx, но нигде не рендерился — мёртвый, удалён 2026-08-29 (Фаза 5).) Тяжёлые зависимости: `docx`/`pptxgenjs`/`xlsx` грузятся отдельным ленивым чанком (~622 КБ), `exceljs` — только в корневом debug-скрипте (не в приложении).

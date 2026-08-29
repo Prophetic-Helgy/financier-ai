@@ -17,6 +17,7 @@ import {
   AiCategorizeItem,
 } from '../lib/store/categorize';
 import { getDefaultConfig, detectLocalLLM, chatWithLocalLLM } from '../lib/llmIntegration';
+import { getLicenseInfo } from '../lib/licensing';
 import { cn } from '../lib/utils';
 
 interface LedgerViewProps {
@@ -495,6 +496,8 @@ export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onResto
 
   // Фаза 4: журнал аудита (кто/когда/что) — последние записи
   const auditRows = useMemo(() => [...(store.auditLog ?? [])].reverse().slice(0, 30), [store.auditLog]);
+  // Фаза 6: режим лицензирования (сейчас — open, см. src/lib/licensing.ts)
+  const license = getLicenseInfo();
 
   return (
     <div className="h-full overflow-y-auto p-6">
@@ -505,6 +508,9 @@ export function LedgerView({ store, busy, onExportBackup, onRestoreFile, onResto
             <h2 className="text-xl font-semibold text-[var(--fg)]">Учёт</h2>
             <p className="text-xs text-[var(--text-muted)] mt-1">
               Данные хранятся локально (файл в userData) и сохраняются между запусками.
+            </p>
+            <p className="text-xs text-[var(--text-muted)] mt-0.5">
+              Лицензия: {license.label} — {license.note}.
             </p>
           </div>
           <div className="flex items-center gap-2">
