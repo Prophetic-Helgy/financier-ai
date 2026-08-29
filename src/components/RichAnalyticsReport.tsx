@@ -10,7 +10,6 @@ import {
 import { generateHeuristicPresentation, runLocalLLMAnalysis } from '../lib/analyticsEngine';
 import ReactMarkdown from 'react-markdown';
 import { cn } from '../lib/utils';
-import { PresentationViewer } from './PresentationViewer';
 import { 
   generateIncomeStatement, generateBalanceSheet, generateCashFlow, 
   calculateFinancialRatios, generateFullManagementReport, generateMarkdownTables,

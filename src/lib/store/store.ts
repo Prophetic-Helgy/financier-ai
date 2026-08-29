@@ -87,7 +87,7 @@ export function getStoreCache(): LedgerStore | null {
 
 export interface ImportResult {
   added: number;
-  skipped: number; // дубликаты / некорректные суммы
+  skipped: number; // дубликаты / некорректные суммы или даты
   blocked: number; // операции в закрытых периодах (Фаза 3.5)
   categorized: number; // автоматически категоризовано эвристикой (Фаза 3.7)
 }
@@ -101,6 +101,16 @@ export function normalizeDate(raw: string): string {
   const d = new Date(s);
   if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
   return s;
+}
+
+/** 'YYYY-MM-DD' — корректная календарная дата (не «2026-13-45» / «2026-02-30» / пустая строка) */
+export function isValidISODate(s: string): boolean {
+  const m = (s || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return false;
+  const y = +m[1], mo = +m[2], d = +m[3];
+  if (mo < 1 || mo > 12) return false;
+  const daysInMonth = new Date(Date.UTC(y, mo, 0)).getUTCDate();
+  return d >= 1 && d <= daysInMonth;
 }
 
 /** Ключ дедупликации: дата + сумма + валюта + контрагент + назначение + направление */
@@ -125,6 +135,8 @@ function counterpartyName(tx: ParsedTransaction): string {
  * переданного объекта: копируйте store перед вызовом).
  * Дедупликация по date+amount+currency+counterparty+purpose, включая уже
  * сохранённые операции и повторные загрузки того же файла.
+ * Некорректные суммы (0/NaN/Infinity) и некорректные даты (пустые,
+ * «2026-13-45», «2026-02-30», не распарсируемые) отскакиваются (skipped).
  * Валюта операций — валюта счёта (Фаза 3.3); accountId — счёт назначения
  * (по умолчанию первый счёт организации).
  * Закрытые периоды (Фаза 3.5): операции с датой в закрытом месяце НЕ
@@ -186,10 +198,12 @@ export function importDocumentToStore(store: LedgerStore, doc: ParsedDocument, a
   let categorized = 0;
   for (const tx of doc.transactions) {
     if (!Number.isFinite(tx.amount) || tx.amount === 0) { skipped++; continue; }
-    if (closed.has(ymOf(normalizeDate(tx.date)))) { blocked++; continue; }
+    const date = normalizeDate(tx.date);
+    if (!isValidISODate(date)) { skipped++; continue; }
+    if (closed.has(ymOf(date))) { blocked++; continue; }
     const key = dedupKey({
       type: tx.type,
-      date: tx.date,
+      date,
       amount: Math.abs(tx.amount),
       currency: account.currency || 'RUB',
       counterparty: counterpartyName(tx),
@@ -206,7 +220,7 @@ export function importDocumentToStore(store: LedgerStore, doc: ParsedDocument, a
       id: createId(),
       orgId: org.id,
       accountId: account.id,
-      date: normalizeDate(tx.date),
+      date,
       amount: Math.abs(tx.amount),
       currency: account.currency || 'RUB',
       type: kind,
