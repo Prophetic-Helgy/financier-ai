@@ -10,8 +10,34 @@ const SUPPORTED_EXTS = new Set([
   'doc', 'docx', 'rtf', 'html', 'htm', 'log', 'sql', 'dat', 'prn', 'eml', 'msg',
 ]);
 const MAX_ENTRIES = 50;
+// Бюджеты против zip/rar-бомб (пентест 2026-08-30, находка #6):
+// разжатые байты проверяются ДО и ВО ВРЕМЯ распаковки, не после.
+const MAX_ENTRY_BYTES = 10 * 1024 * 1024; // 10 МБ на запись
+const MAX_TOTAL_BYTES = 50 * 1024 * 1024; // 50 МБ на весь архив
 
 interface FileLike { name: string; content: string; }
+
+/**
+ * Имя записи архива → безопасный basename: любые разделители каталогов
+ * режутся, «../» обесценивается, слишком длинные имена отбрасываются.
+ */
+export function sanitizeEntryName(name: string): string {
+  const base = String(name ?? '').split(/[\\/]/).pop() || '';
+  return base.length > 0 && base.length <= 128 ? base : '';
+}
+
+/** Бюджетный сторож архива: кумулятивный учёт разжатых байтов и записей. */
+export function assertEntryBudget(name: string, declaredSize: number, totalSoFar: number, entriesSoFar: number): number {
+  if (entriesSoFar + 1 > MAX_ENTRIES) throw new Error(`в архиве слишком много файлов (максимум ${MAX_ENTRIES})`);
+  if (declaredSize > MAX_ENTRY_BYTES) {
+    throw new Error(`файл «${name}» в архиве слишком большой (${Math.round(declaredSize / 1024 / 1024)} МБ; максимум ${MAX_ENTRY_BYTES / 1024 / 1024} МБ)`);
+  }
+  const next = totalSoFar + declaredSize;
+  if (next > MAX_TOTAL_BYTES) {
+    throw new Error('архив слишком большой после распаковки (лимит 50 МБ) — похоже на zip-bomb');
+  }
+  return next;
+}
 
 export function archiveKind(name: string): 'zip' | 'rar' | null {
   const ext = (name.split('.').pop() || '').toLowerCase();
@@ -44,14 +70,36 @@ function toFileData(name: string, u8: Uint8Array, strFromU8: (u8: Uint8Array) =>
 
 export async function extractZipArchive(file: FileLike): Promise<FileLike[]> {
   const fflate = await import("fflate");
-  const entries = fflate.unzipSync(dataUrlToU8(file.content));
+  // Пентест, находка #6: filter проверяет ЗАЯВЛЕННЫЕ имена/размеры ДО разжатия
+  // (неподдерживаемое и сверхбюджетное не разжимается вообще). Враньё в
+  // заголовках ловит сам inflateSync: буфер предвыделен по заявленному размеру,
+  // раздувшийся поток = ошибка inflate, а не OOM. Кумулятивный бюджет — 50 МБ.
+  const data = dataUrlToU8(file.content);
+  let totalBytes = 0;
+  let entriesSeen = 0;
+  let budgetError: string | null = null;
+  const entriesMap = fflate.unzipSync(data, {
+    filter: (f) => {
+      if (budgetError) return false; // бюджет уже превышен — не разжимаем ничего лишнего
+      const name = sanitizeEntryName(f.name);
+      if (!name) return false; // папка, traversal-мусор, кривое имя
+      const ext = (name.split('.').pop() || '').toLowerCase();
+      if (!SUPPORTED_EXTS.has(ext)) return false; // не разжимаем неподдерживаемый хлам
+      try {
+        // В fflate у записи: originalSize — несжатый размер, size — сжатый
+        totalBytes = assertEntryBudget(name, f.originalSize || 0, totalBytes, entriesSeen);
+        entriesSeen += 1;
+      } catch (e: any) {
+        budgetError = e?.message || String(e);
+        return false;
+      }
+      return true;
+    },
+  });
+  if (budgetError) throw new Error(budgetError);
   const out: FileLike[] = [];
-  for (const [entryName, u8] of Object.entries(entries)) {
-    if (out.length >= MAX_ENTRIES) break;
-    if (entryName.endsWith('/')) continue; // папка
-    const name = entryName.split('/').pop() || entryName;
-    const ext = (name.split('.').pop() || '').toLowerCase();
-    if (!SUPPORTED_EXTS.has(ext)) continue;
+  for (const [entryName, u8] of Object.entries(entriesMap)) {
+    const name = sanitizeEntryName(entryName) || entryName;
     out.push(toFileData(name, u8, fflate.strFromU8));
   }
   return out;

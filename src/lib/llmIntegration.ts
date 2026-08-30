@@ -13,6 +13,46 @@ const DEFAULT_ENDPOINT = "http://127.0.0.1:1234/v1/chat/completions";
 const PORTABLE_ENDPOINT = "https://example.com/v1/chat/completions";
 const STORAGE_KEY = "llm_config";
 
+/**
+ * SSRF-гигиена LLM-endpoint (пентест 2026-08-30, находка #9).
+ * Разрешены http(s): localhost и RFC1918 — локальный LLM (LM Studio, в т.ч.
+ * на домашнем LAN) это фича. Запрещены: прочие протоколы, 0.0.0.0/::,
+ * link-local 169.254.* и метаданные-адреса облаков (169.254.169.254, *.internal).
+ * Единственная реализация — проверять ПЕРЕД каждым fetch и в UI-настройках.
+ */
+export function validateEndpoint(rawUrl: string): { ok: boolean; error: string | null } {
+  let url: URL;
+  try {
+    url = new URL(String(rawUrl));
+  } catch {
+    return { ok: false, error: 'некорректный URL endpoint' };
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    return { ok: false, error: 'endpoint: разрешены только http:// и https://' };
+  }
+  const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (host === '0.0.0.0' || host === '::') {
+    return { ok: false, error: 'endpoint: укажите 127.0.0.1 вместо 0.0.0.0' };
+  }
+  if (host.startsWith('169.254.') || host === 'metadata.google.internal' || host.endsWith('.internal')) {
+    return { ok: false, error: 'endpoint: link-local/метаданные-адреса запрещены' };
+  }
+  return { ok: true, error: null };
+}
+
+/**
+ * Гигиена промптов (пентест, находка #7): недоверенный текст импортированных
+ * документов (назначение платежа, memo, поля OCR) попадает в LLM-промпт только
+ * после escape-решёток ``` (нельзя преждевременно закрыть ограждение промпта)
+ * и вырезания управляющих символов.
+ */
+export function sanitizePromptText(text: string, maxLen = 20000): string {
+  return String(text ?? '')
+    .replace(/`{3,}/g, "'''")
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, ' ')
+    .slice(0, maxLen);
+}
+
 /** Check if running in portable (distribution) mode */
 export function isPortableMode(): boolean {
   // In portable mode, the endpoint will be the placeholder
@@ -69,8 +109,7 @@ export async function detectLocalLLM(): Promise<{ available: boolean; endpoint: 
   const endpoints = [
     "http://127.0.0.1:1234/v1/models",
     "http://localhost:1234/v1/models",
-    "http://0.0.0.0:1234/v1/models",
-  ];
+  ]; // 0.0.0.0 убран: bind-адрес, а не адрес назначения (пентест, находка #9)
 
   for (const url of endpoints) {
     try {
@@ -114,7 +153,11 @@ export async function chatWithLocalLLM(
   messages: ChatMessage[],
   options?: { temperature?: number; maxTokens?: number }
 ): Promise<LLMResponse> {
-  
+
+  // Endpoint-гейт (пентест, находка #9): fetch только на валидный http(s)-адрес
+  const epCheck = validateEndpoint(config.endpoint);
+  if (!epCheck.ok) return { text: `⚠️ Endpoint отклонён: ${epCheck.error}`, error: epCheck.error };
+
   const payload = {
     model: config.model || "local-model",
     messages,
@@ -183,6 +226,10 @@ export async function chatWithLocalLLMStream(
   onChunk: (chunk: string) => void,
   options?: { temperature?: number; maxTokens?: number }
 ): Promise<{ done: boolean; error?: string }> {
+
+  // Endpoint-гейт (пентест, находка #9): fetch только на валидный http(s)-адрес
+  const epCheck = validateEndpoint(config.endpoint);
+  if (!epCheck.ok) return { done: true, error: epCheck.error || 'endpoint отклонён' };
 
   const payload = {
     model: config.model || "local-model",
@@ -271,8 +318,9 @@ export function getFinancialAnalysisPrompt(docType: string, dataSummary: string)
 5. Не выдумывай цифры, работай только с предоставленными данными`
     },
     {
+      // Fence-escape недоверенных полей документа (пентест, находка #7)
       role: "user",
-      content: `Документ: ${docType}\n\nДанные:\n${dataSummary}`
+      content: `Документ: ${sanitizePromptText(docType, 500)}\n\nДанные:\n${sanitizePromptText(dataSummary)}`
     }
   ];
 }
@@ -284,8 +332,8 @@ export function getPersonalFinancePrompt(doc: any): ChatMessage[] {
       content: `Ты — персональный финансовый консультант. Анализируй личные финансы клиента и давай советы по оптимизации бюджета, накоплениям, инвестициям и гашению кредитов.`
     },
     {
-      role: "user", 
-      content: `Финансовые данные клиента:\n${JSON.stringify(doc, null, 2)}`
+      role: "user",
+      content: `Финансовые данные клиента:\n${sanitizePromptText(JSON.stringify(doc, null, 2), 200000)}`
     }
   ];
 }
@@ -317,7 +365,7 @@ export function getPitchDeckPrompt(docType: string, metrics: any): ChatMessage[]
     },
     {
       role: "user",
-      content: `Финансовые данные для презентации:\n${JSON.stringify(metrics, null, 2)}`
+      content: `Финансовые данные для презентации:\n${sanitizePromptText(JSON.stringify(metrics, null, 2), 200000)}`
     }
   ];
 }

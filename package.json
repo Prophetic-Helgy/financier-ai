@@ -5,7 +5,7 @@
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
-    "dev": "vite --port=3000 --host=0.0.0.0",
+    "dev": "vite --port=3000 --host=127.0.0.1",
     "build": "vite build",
     "preview": "vite preview",
     "electron:dev": "vite build && cmd /c \"set ELECTRON_RUN_AS_NODE= && electron electron/main.cjs\"",
@@ -29,11 +29,6 @@
     ],
     "extraResources": [
       "build/icon.ico"
-    ],
-    "extraFiles": [
-      {
-        "from": "dist"
-      }
     ],
     "win": {
       "icon": "build/icon.ico",

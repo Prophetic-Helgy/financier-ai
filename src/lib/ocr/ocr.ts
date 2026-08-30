@@ -31,6 +31,10 @@ export async function getOcrWorker(onLog?: (msg: string) => void): Promise<any> 
     workerPromise = (async () => {
       const T = await loadTesseract();
       let lastStatus = '';
+      // Пути worker/core/lang НЕ переопределяем: дефолты tesseract.js выводятся
+      // из версии УСТАНОВЛЕННОГО пакета (точное закрепление, пентест находка #8),
+      // ручной пин здесь рассинхронизировал бы worker с lib при апгрейде.
+      // CDN (jsdelivr) закрыт allowlist'ом CSP; локализация ассетов — follow-up.
       return T.createWorker('rus', T.OEM?.LSTM_ONLY ?? 1, {
         logger: (m: any) => {
           if (onLog && m.status && m.status !== lastStatus) {

@@ -55,8 +55,10 @@ export function migrateStore(raw: unknown): LedgerStore {
   if (!raw || typeof raw !== 'object') return createEmptyStore();
   const data = raw as { schemaVersion?: unknown };
 
-  if (typeof data.schemaVersion !== 'number') {
-    console.warn('[store] schemaVersion отсутствует — файл не является хранилищем Финансист.AI, начинаю с чистого');
+  // (пентест, находка #3) только целый положительный schemaVersion; иначе
+  // while-цикл below на мусорном значении бросил бы на некорректном файле.
+  if (typeof data.schemaVersion !== 'number' || !Number.isInteger(data.schemaVersion) || data.schemaVersion < 1) {
+    console.warn('[store] schemaVersion отсутствует/некорректен — файл не является хранилищем Финансист.AI, начинаю с чистого');
     return createEmptyStore();
   }
 

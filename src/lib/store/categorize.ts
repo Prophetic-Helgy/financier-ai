@@ -13,6 +13,7 @@
  */
 import { createId } from './schema';
 import type { Category, Transaction } from './schema';
+import { sanitizePromptText } from '../llmIntegration';
 
 /** Имя встроенной категории для операций без определённой категории. */
 export const UNCATEGORIZED = 'Без категории';
@@ -124,8 +125,12 @@ export interface AiCategorizeItem {
 export function categorizePrompt(items: AiCategorizeItem[], categories: Category[]) {
   const names = (k: 'income' | 'expense') =>
     categories.filter(c => c.kind === k).map(c => c.name);
+  // Поля из импортированных выписок — недоверенные (пентест, находка #7):
+  // fence-escape + сворачиваем в одну строку, чтобы запись нельзя было «раздвоить».
+  const oneLine = (s: unknown, max: number) =>
+    sanitizePromptText(String(s ?? ''), max).replace(/[\r\n]+/g, ' ');
   const lines = items.map((t, i) =>
-    `${i + 1}) ${t.kind === 'income' ? 'доход' : 'расход'}, контрагент: «${t.counterparty}», назначение: «${t.purpose}»`
+    `${i + 1}) ${t.kind === 'income' ? 'доход' : 'расход'}, контрагент: «${oneLine(t.counterparty, 200)}», назначение: «${oneLine(t.purpose, 300)}»`
   ).join('\n');
   return [
     {

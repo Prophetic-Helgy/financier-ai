@@ -2,6 +2,18 @@
 <html lang="ru">
   <head>
     <meta charset="UTF-8" />
+    <!--
+      CSP (пентест 2026-08-30, находка #4). connect-src намеренно допускает
+      http:/https: — локальный LLM может быть на LAN-адресе (LM Studio на другом
+      хосте); SSRF-гигиена обеспечивается validateEndpoint в llmIntegration.ts,
+      lockdown навигации — в main.cjs. script-src закрывает исполнение чужого JS:
+      'unsafe-inline' нужен inline-скрипту темы и dev-преамбуле Vite; jsdelivr —
+      worker/wasm/языковой пакет tesseract.js (закреплён по версии в ocr.ts).
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self' blob:; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob: https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss: http: https: blob: data: file:; img-src 'self' data: blob:; font-src 'self' data:; worker-src 'self' blob:; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+    />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/x-icon" href="/build/icon.ico" />
     <title>Финансист.AI</title>
