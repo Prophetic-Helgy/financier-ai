@@ -87,7 +87,7 @@
 1. ✅ **Готово (2026-08-29)** — три артефакта в `release/`: `Финансист.AI Setup 1.0.0.exe` (NSIS, 116,5 МБ), `Финансист.AI 1.0.0.exe` (portable, 116,2 МБ), `Финансист.AI Portable x64.zip` (168,6 МБ, 180 записей, smoke: распаковка → запуск → жив 15 с). Данные общие `%APPDATA%\financier-ai`.
 2. ✅ **Готово (2026-08-29)** — `src/lib/licensing.ts`: policy-флаг `LICENSE_POLICY='open'` + `getLicenseInfo()`, строка «Лицензия: Открытый режим» в шапке «Учёта». Платный режим — только дизайн: `docs/PAYED_LICENSING.md` (ключ/HMAC, привязка к машине, онлайн/офлайн-активация, grace, отзыв/продление, чек-лист).
 3. ✅ **Готово (2026-08-29)** — README.md переписан (только фактические возможности, без PDF/7z/«МСФО»/@google/genai); USER_GUIDE.md (15 разделов: установка → FAQ); CHANGELOG.md (блок Фазы 6); открытый режим описан в README «Лицензия» и USER_GUIDE §14.
-4. ⏳ **Ждёт подтверждения пользователя** — публикация: создать private-репозиторий `Prophetic-Helgy/financier-ai`, push, тег `v1.0.0`, GitHub Release с тремя артефактами (решение «private» получено 2026-08-27).
+4. ✅ **Готово (2026-08-29, по подтверждению пользователя)** — публикация: private-репозиторий [`Prophetic-Helgy/financier-ai`](https://github.com/Prophetic-Helgy/financier-ai) (проверено: visibility=PRIVATE), push main, тег `v1.0.0`, [GitHub Release «Финансист.AI 1.0.0»](https://github.com/Prophetic-Helgy/financier-ai/releases/tag/v1.0.0) с тремя артефактами (`Financier.AI.Setup.1.0.0.exe` 122 107 097 B, `Financier.AI.1.0.0.exe` 121 827 498 B, `Financier.AI.Portable.x64.zip` 176 695 249 B — размеры совпадают с локальными). Перед push проверена гигиена истории: blobs >40 МБ нет, ref_data/RAR/release не отслеживаются.
 
 ---
 
