@@ -175,13 +175,14 @@ function createWindow() {
     mainWindow.webContents.openDevTools();
   }
   
-  // Listen for load failures (Electron 30+: события отдают details-объект)
-  mainWindow.webContents.on('did-fail-load', (_event, details) => {
-    console.error('[main] did-fail-load:', details.errorCode, details.errorDescription);
+  // Listen for load failures (Electron 44+: параметры переехали на Event-объект;
+  // читаем и старые позиционные аргументы, и новые — чтобы работало на обеих схемах)
+  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+    console.error('[main] did-fail-load:', errorCode ?? event.errorCode, errorDescription ?? event.errorDescription);
   });
 
-  mainWindow.webContents.on('console-message', (_event, details) => {
-    console.log(`[renderer] ${details.level}: ${details.message}`);
+  mainWindow.webContents.on('console-message', (event, level, message) => {
+    console.log(`[renderer] ${level ?? event.level}: ${message ?? event.message}`);
   });
 }
 
