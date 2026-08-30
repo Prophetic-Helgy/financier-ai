@@ -81,6 +81,7 @@
     "autoprefixer": "^10.4.21",
     "electron": "^44.0.0",
     "electron-builder": "^26.8.1",
+    "playwright-core": "^1.62.1",
     "sharp": "^0.34.5",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",

@@ -31,3 +31,6 @@ test-report.html
 .impeccable/
 # Кэш языковых моделей OCR (tesseract.js в Node-тестах скачивает в cwd)
 *.traineddata
+
+# Данные для скриншотов (синтетический seed + userData Electron)
+screenshots/.userdata/

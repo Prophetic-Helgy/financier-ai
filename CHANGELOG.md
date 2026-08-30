@@ -2,6 +2,26 @@
 
 Формат: [Unreleased] + версии. Даты — фактические.
 
+## [1.0.1] — 2026-08-30 (пентест + скраб, публичный релиз)
+
+### Security (тотальный пентест, 2026-08-30)
+- **11 находок закрыты кодом**, закреплены новым сьютом [test-security.ts](test-security.ts) (70 проверок): lockdown навигации окон (классификатор URL в main-процессе), SSRF-гейт `validateEndpoint` для LLM-endpoint'ов, валидация «шейпа» бэкапа перед восстановлением, защита от zip/rar-bomb (бюджеты по **несжатым** размерам через `fflate.unzipSync`+`filter`), fence-escape в markdown-экспорте, CSP-ужесточения. 8 осознанных принято-рисков задокументированы в [BUGS.md](BUGS.md).
+- **Electron 28 → 44**: исправлены вымершие сигнатуры событий `did-fail-load` / `console-message` (чтение в обеих сигнатурах); sandbox/contextIsolation — штатно.
+- **CVE-зависимости**: `xlsx` → 0.20.3 (официальный tarball cdn.sheetjs.com; ReDoS GHSA-4r6h-8v6p-xvw6), `pdfjs-dist` → 4.10.38 (RCE GHSA-wgrm; вендорный worker v3 удалён, используется `pdf.worker.min.mjs` из пакета); transitive-риск `image-size` (нет фикса upstream) задокументирован в BUGS.md.
+
+### Removed (скраб v1.0.1)
+- **`src/lib/competitorAnalysis.ts` и вкладка «Конкуренция» удалены полностью** (решение владельца: surface не для публичного релиза).
+- 12 dev-остатков удалены из репозитория (`test-stream.ts`, `test-real-files.ts`, `debug-formats.ts`, `generate-excel.ts`, `unrar.ts`, `check-extract.cjs`, скрипты копирования, отчёты); `npx tsc --noEmit` чист.
+- Локальные данные тестов выведены из тестов: `test-bank-import.ts` берёт RAR-архив из `FINANCIER_TEST_RAR` (git-ignorable), имена файлов не печатает.
+
+### Docs (sanitise HEAD)
+- Заметки в CHANGELOG/PROJECT_ANALYSIS/ROADMAP обезличены: внутренний dev-IP и пути к локальным каталогам документов заменены нейтральными формулировками (история git не переписывается — по решению владельца).
+
+### Build / Release
+- Артефакты v1.0.1 (x64): Setup .exe (NSIS) 152,8 МБ · portable .exe 152,5 МБ · Portable x64.zip 220,3 МБ. Размер вырос с 122 МБ — Electron 44. Тихая установка → запуск → ярлыки → удаление — тест пройден (exit 0, система чистая).
+- **Скриншоты**: [scripts/screenshots.ts](scripts/screenshots.ts) — seed синтетических данных + Electron + playwright-core → `screenshots/` (7 кадров; никаких реальных данных).
+- Регрессия: 10 авто-сьютов, 332 проверки, 0 ошибок.
+
 ## [Unreleased] — до релизного качества (релиз 1.0.0, 2026-08-29)
 
 ### Added (2026-08-29, Фаза 6 — подготовка к релизу)
