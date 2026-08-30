@@ -8,7 +8,7 @@
  *  2. parseDocument — XLSX-фикстура Сбера (через extractExcelData).
  *  3. Регрессия 1С: test-data/1c_bank_statement.txt парсится как раньше.
  *  4. expandArchives — ZIP-фикстура → 2 CSV → парсятся.
- *  5. RAR (если на диске ref_data/ref_data.rar) — electron/rarExtract.cjs.
+ *  5. RAR (если задана env FINANCIER_TEST_RAR — локальные данные вне git) — electron/rarExtract.cjs.
  *  6. importDocumentToStore — импорт + дедупликация повторного импорта.
  */
 import fs from 'fs';
@@ -85,18 +85,20 @@ async function main() {
   check('ZIP: выписка Сбера распарсена (>= 6)', !!zipSber && zipSber.transactions.length >= 6, zipSber ? String(zipSber.transactions.length) : 'нет');
   check('ZIP: выписка Т-Банка распарсена (>= 6)', !!zipTbank && zipTbank.transactions.length >= 6, zipTbank ? String(zipTbank.transactions.length) : 'нет');
 
-  console.log('\n[5] RAR: electron/rarExtract.cjs (если есть ref_data.rar)');
-  const rarPath = path.join(process.cwd(), 'ref_data', 'ref_data.rar');
-  if (fs.existsSync(rarPath)) {
+  console.log('\n[5] RAR: electron/rarExtract.cjs (если задан FINANCIER_TEST_RAR)');
+  // Локальные тестовые данные вне git; путь задаётся переменной окружения,
+  // чтобы в репозиторий не попадали ни путь, ни имена файлов архива.
+  const rarPath = process.env.FINANCIER_TEST_RAR || '';
+  if (rarPath && fs.existsSync(rarPath)) {
     const { extractRarBase64 } = require('./electron/rarExtract.cjs') as { extractRarBase64: (b64: string) => Promise<any[]> };
     const b64 = fs.readFileSync(rarPath).toString('base64');
     const entries = await extractRarBase64(b64);
     check('RAR: файлы извлечены', Array.isArray(entries) && entries.length > 0, String(entries.length));
     if (entries.length > 0) {
-      console.log('    (первые имена: ' + entries.slice(0, 3).map((e: any) => e.name).join(', ') + '...)');
+      console.log('    (записей в архиве: ' + entries.length + ')');
     }
   } else {
-    console.log('  – ref_data.rar не найден, пропуск (проверяется в ручном тесте)');
+    console.log('  – тестовый RAR не задан (FINANCIER_TEST_RAR), пропуск (проверяется в ручном тесте)');
   }
 
   console.log('\n[6] Хранилище: импорт выписки Сбера + дедупликация');

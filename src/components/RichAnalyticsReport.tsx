@@ -25,7 +25,6 @@ import {
   comparePeriods, PeriodComparison,
   generateRecommendations, Recommendation
 } from '../lib/competitorFeatures';
-import { getTopThreats, getPrioritizedTasks, GAP_ANALYSIS } from '../lib/competitorAnalysis';
 
 interface RichAnalyticsReportProps {
   document: ParsedDocument;
@@ -40,7 +39,7 @@ const CAPEX_KEYWORDS = ['оборудован', 'техник', 'инвест', 
 const FINANCING_INCOME_KEYWORDS = ['кредит', 'займ'];
 const FINANCING_EXPENSE_KEYWORDS = ['гашение', 'погашение кредита', 'дивиденд'];
 
-type ReportTabType = 'summary' | 'pnl' | 'cashflow' | 'balance' | 'ratios' | 'fullReport' | 'slides' | 'budget' | 'costing' | 'kpi' | 'scenarios' | 'forecast' | 'recommendations' | 'periods' | 'competition';
+type ReportTabType = 'summary' | 'pnl' | 'cashflow' | 'balance' | 'ratios' | 'fullReport' | 'slides' | 'budget' | 'costing' | 'kpi' | 'scenarios' | 'forecast' | 'recommendations' | 'periods';
 
 export function RichAnalyticsReport({ document, themeColor }: RichAnalyticsReportProps) {
   const [reportTab, setReportTab] = useState<ReportTabType>('summary');
@@ -205,7 +204,6 @@ export function RichAnalyticsReport({ document, themeColor }: RichAnalyticsRepor
     { key: 'forecast', icon: <TrendingUp className="w-4 h-4 mr-2" />, label: 'Прогноз ДДС' },
     { key: 'recommendations', icon: <Sparkles className="w-4 h-4 mr-2" />, label: 'Рекомендации AI' },
     { key: 'periods', icon: <LineChart className="w-4 h-4 mr-2" />, label: 'Сравнение периодов' },
-    { key: 'competition', icon: <Briefcase className="w-4 h-4 mr-2" />, label: 'Анализ конкурентов' },
   ];
 
   // Расширенный тип для вкладок
@@ -1028,71 +1026,6 @@ export function RichAnalyticsReport({ document, themeColor }: RichAnalyticsRepor
                 })()}
               </>
             ) : <p className="text-[var(--text-muted)] text-center py-8">Нужно минимум 2 периода для сравнения</p>}
-          </div>
-        )}
-
-        {/* === COMPETITION ANALYSIS === */}
-        {reportTab === 'competition' && (
-          <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-6 mt-6">
-            <h3 className="text-xl font-semibold text-[var(--fg)] flex items-center"><Briefcase className="w-5 h-5 mr-2" /> Анализ конкурентного ландшафта</h3>
-            
-            {/* Top Threats */}
-            <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-6 shadow-sm">
-              <h4 className="text-lg font-semibold text-[var(--fg)] mb-4">🔴 Основные конкуренты</h4>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {getTopThreats().slice(0, 6).map((c, i) => (
-                  <div key={i} className="border border-[var(--border)] rounded-xl p-4 bg-[var(--surface-inner)]/30">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="font-semibold text-[var(--fg)]">{c.name}</span>
-                      <span className={cn("px-2 py-1 rounded-full text-xs font-medium",
-                        c.threatLevel === 'critical' ? 'bg-rose-500/20 text-rose-600' :
-                        c.threatLevel === 'high' ? 'bg-orange-500/20 text-orange-600' :
-                        'bg-amber-500/20 text-amber-600')}>{c.threatLevel.toUpperCase()}</span>
-                    </div>
-                    <div className="text-xs text-[var(--text-muted)] mb-2">Сегменты: {c.segment.join(', ')}</div>
-                    <div className="text-xs text-[var(--text-muted)] mb-2">Ценообразование: {c.pricing}</div>
-                    <div className="space-y-1 text-xs">
-                      <div className="text-emerald-500">✅ {c.strengths.slice(0, 2).join(', ')}</div>
-                      <div className="text-rose-500">❌ {c.weaknesses.slice(0, 2).join(', ')}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* GAP Analysis */}
-            <div className="bg-gradient-to-r from-emerald-500/10 to-teal-500/10 border border-emerald-500/20 rounded-2xl p-6 shadow-sm">
-              <h4 className="text-lg font-semibold text-emerald-500 mb-4">🏆 Уникальные преимущества financier.ai</h4>
-              <div className="space-y-3">
-                {GAP_ANALYSIS.无人满足.map((gap: any, i: number) => (
-                  <div key={i} className="bg-[var(--surface)] border border-[var(--border)] rounded-xl p-4">
-                    <div className="font-medium text-[var(--fg)] mb-1">{gap.gap}</div>
-                    <div className="text-sm text-[var(--text-muted)]">{gap.description}</div>
-                    <div className="text-xs text-emerald-500 mt-2">💡 {gap.opportunity}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Roadmap */}
-            <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-6 shadow-sm">
-              <h4 className="text-lg font-semibold text-[var(--fg)] mb-4">📋 План развития (Roadmap)</h4>
-              <div className="space-y-3">
-                {getPrioritizedTasks().slice(0, 8).map((item, i) => (
-                  <div key={i} className="border border-[var(--border)] rounded-xl p-4 bg-[var(--surface-inner)]/20">
-                    <div className="flex items-start justify-between mb-1">
-                      <span className="font-medium text-[var(--fg)] text-sm">{item.title}</span>
-                      <span className={cn("px-2 py-0.5 rounded text-xs font-bold",
-                        item.priority === 'P0' ? 'bg-rose-500/20 text-rose-600' :
-                        item.priority === 'P1' ? 'bg-orange-500/20 text-orange-600' :
-                        'bg-amber-500/20 text-amber-600')}>{item.priority}</span>
-                    </div>
-                    <div className="text-xs text-[var(--text-muted)] mb-2">{item.description}</div>
-                    <div className="text-xs text-indigo-500">Вдохновлено: {item.competitorInspiration}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
           </div>
         )}
 

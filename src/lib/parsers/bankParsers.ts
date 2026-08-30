@@ -9,7 +9,7 @@ function getPdfjs() {
     // ?url-импорт внутри: вне Vite (tsx-тесты) модуль не трогаем без PDF
     pdfjsPromise = Promise.all([
       import("pdfjs-dist"),
-      import("../pdf.worker.min.js?url").then((m) => m.default),
+      import("pdfjs-dist/build/pdf.worker.min.mjs?url").then((m) => m.default),
     ]).then(([pdfjsLib, pdfWorker]) => {
       // Setup PDF worker using local file (works in Electron)
       if (pdfjsLib.GlobalWorkerOptions) {

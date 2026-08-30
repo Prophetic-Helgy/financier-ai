@@ -15,7 +15,7 @@ import { createRequire } from 'module';
 
 // Configure PDF.js worker for Node.js (ES module compatible)
 const require = createRequire(import.meta.url);
-const pdfWorkerPath = require.resolve('pdfjs-dist/build/pdf.worker.min.js');
+const pdfWorkerPath = require.resolve('pdfjs-dist/build/pdf.worker.min.mjs');
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerPath;
 
 interface ParsedTransaction {
